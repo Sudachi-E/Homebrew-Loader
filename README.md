@@ -23,7 +23,7 @@ An Aroma plugin for loading homebrew though the config menu:
 - Libraries installed:
   - [wut](https://github.com/devkitPro/wut)
   - [wups](https://github.com/Maschell/WiiUPluginSystem)
-  - [wums](https://github.com/Maschell/wums) (RPX loader)
+  - [wums](https://github.com/Maschell/wums)
 
 ## Build
 - From project root run:
