@@ -117,6 +117,7 @@ static void make_sanitized_identifier(char *dst, size_t dst_len, const char *nam
             DEBUG_FUNCTION_LINE_INFO("Y pressed on Quick item - ignored");
         }
     } else if (input.buttons_d & WUPS_CONFIG_BUTTON_X) {
+        if (item->app_list.count == 0) return;
         const HomebrewApp &app = item->app_list.items[item->current_index];
         if (!(item->identifier && strcmp(item->identifier, "launchApp") == 0)) {
             DEBUG_FUNCTION_LINE_INFO("X pressed on Quick item - remove quick for %s", app.path);
@@ -132,6 +133,7 @@ static void make_sanitized_identifier(char *dst, size_t dst_len, const char *nam
             item->info_until_ticks = (uint64_t) OSGetTime() + (uint64_t) OSMillisecondsToTicks(5000);
         }
     } else if (input.buttons_d & WUPS_CONFIG_BUTTON_A) {
+        if (item->app_list.count == 0) return;
         DEBUG_FUNCTION_LINE_INFO("Launching homebrew: %s (%s)", item->app_list.items[item->current_index].name, item->app_list.items[item->current_index].path);
         const HomebrewApp &app = item->app_list.items[item->current_index];
         RPXLoaderStatus initRes = RPXLoader_InitLibrary();

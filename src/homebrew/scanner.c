@@ -31,7 +31,10 @@ static bool read_meta_name(const char *dir_path, char **out_name) {
     memcpy(path, dir_path, dlen);
     memcpy(path + dlen, sfx, strlen(sfx) + 1);
     FILE *f = fopen(path, "rb");
-     if (!f) return false;
+    if (!f) {
+        free(path);
+        return false;
+    }
      char buf[2048];
      size_t r = fread(buf, 1, sizeof(buf) - 1, f);
      fclose(f);
