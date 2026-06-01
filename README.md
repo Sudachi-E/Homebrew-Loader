@@ -1,6 +1,6 @@
 # Homebrew Loader
 
-An Aroma plugin that opens an overlay menu to browse and launch homebrew from the SD card via a button combo (default: L + D-Pad Down + MINUS).
+An Aroma plugin that opens an overlay menu to browse and launch homebrew from the SD card via a button combo (default: L + R + D-Pad Down).
 
 The button combo can be changed in the Aroma Config Menu.
 
