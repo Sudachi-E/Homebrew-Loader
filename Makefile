@@ -1,6 +1,4 @@
-#-------------------------------------------------------------------------------
 .SUFFIXES:
-#-------------------------------------------------------------------------------
 
 ifeq ($(strip $(DEVKITPRO)),)
 $(error "Please set DEVKITPRO in your environment. export DEVKITPRO=<path to>/devkitpro")
@@ -13,23 +11,13 @@ include $(DEVKITPRO)/wups/share/wups_rules
 WUT_ROOT := $(DEVKITPRO)/wut
 WUMS_ROOT := $(DEVKITPRO)/wums
 
-#-------------------------------------------------------------------------------
-# TARGET is the name of the output
-# BUILD is the directory where object files & intermediate files will be placed
-# SOURCES is a list of directories containing source code
-# DATA is a list of directories containing data files
-# INCLUDES is a list of directories containing header files
-#-------------------------------------------------------------------------------
 TARGET		:=	HomebrewLoader
 BUILD		:=	build
-SOURCES		:=	src src/utils src/config src/homebrew
+SOURCES		:=	src src/utils src/homebrew src/menu
 DATA		:=	data
-INCLUDES	:=	src
+INCLUDES	:=	src src/menu
 
-#-------------------------------------------------------------------------------
-# options for code generation
-#-------------------------------------------------------------------------------
-CFLAGS	:=	-g -Wall -O2 -ffunction-sections \
+CFLAGS	:=	-g -Wall -O2 -ffunction-sections -DDEBUG \
 			$(MACHDEP)
 
 CFLAGS	+=	$(INCLUDE) -D__WIIU__ -D__WUT__ -D__WUPS__
@@ -37,7 +25,7 @@ CFLAGS	+=	$(INCLUDE) -D__WIIU__ -D__WUT__ -D__WUPS__
 CXXFLAGS	:= $(CFLAGS)
 
 ASFLAGS	:=	-g $(ARCH)
-LDFLAGS	=	-g $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map) $(WUPSSPECS)
+LDFLAGS	=	-g $(ARCH) $(RPXSPECS) -Wl,-Map,$(notdir $*.map) -T$(WUMS_ROOT)/share/libmappedmemory.ld $(WUPSSPECS)
 
 ifeq ($(DEBUG),1)
 CXXFLAGS += -DDEBUG -g
@@ -47,20 +35,11 @@ endif
 CXXFLAGS += -O2
 CFLAGS += -O2
 
-LIBS	:= -lwups -lwut -lrpxloader
+LIBS	:= -lwups -lwut -lrpxloader -lmappedmemory
 
-#-------------------------------------------------------------------------------
-# list of directories containing libraries, this must be the top level
-# containing include and lib
-#-------------------------------------------------------------------------------
 LIBDIRS	:= $(PORTLIBS) $(WUPS_ROOT) $(WUT_ROOT) $(WUMS_ROOT)
 
-#-------------------------------------------------------------------------------
-# no real need to edit anything past this point unless you need to add additional
-# rules for different file extensions
-#-------------------------------------------------------------------------------
 ifneq ($(BUILD),$(notdir $(CURDIR)))
-#-------------------------------------------------------------------------------
 
 export OUTPUT	:=	$(CURDIR)/$(TARGET)
 export TOPDIR	:=	$(CURDIR)
@@ -75,10 +54,7 @@ CPPFILES	:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.cpp)))
 SFILES		:=	$(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
 BINFILES	:=	$(foreach dir,$(DATA),$(notdir $(wildcard $(dir)/*.*)))
 
-#-------------------------------------------------------------------------------
-#-------------------------------------------------------------------------------
 export LD	:=	$(CXX)
-#-------------------------------------------------------------------------------
 
 export OFILES_BIN	:=	$(addsuffix .o,$(BINFILES))
 export OFILES_SRC	:=	$(CPPFILES:.cpp=.o) $(CFILES:.c=.o) $(SFILES:.s=.o)
@@ -93,29 +69,26 @@ export LIBPATHS	:=	$(foreach dir,$(LIBDIRS),-L$(dir)/lib)
 
 .PHONY: $(BUILD) clean all
 
-#-------------------------------------------------------------------------------
 all: $(BUILD)
 
 $(BUILD):
 	@$(shell [ ! -d $(BUILD) ] && mkdir -p $(BUILD))
 	@$(MAKE) --no-print-directory -C $(BUILD) -f $(CURDIR)/Makefile
 
-#-------------------------------------------------------------------------------
 clean:
 	@echo clean ...
 	@rm -fr $(BUILD) $(TARGET).wps $(TARGET).elf
 
-#-------------------------------------------------------------------------------
 else
 .PHONY:	all
 
 DEPENDS	:=	$(OFILES:.o=.d)
 
-#-------------------------------------------------------------------------------
-# main targets
-#-------------------------------------------------------------------------------
 all	:	$(OUTPUT).wps
 
 $(OUTPUT).wps	:	$(OUTPUT).elf
 $(OUTPUT).elf	:	$(OFILES)
+
+-include $(DEPENDS)
+
 endif

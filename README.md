@@ -1,22 +1,13 @@
 # Homebrew Loader
 
-An Aroma plugin for loading homebrew though the config menu:
-- Browse and launch homebrew from the SD card `sd:/wiiu/apps`
+An Aroma plugin that opens an overlay menu to browse and launch homebrew from the SD card via a button combo (default: L + D-Pad Down + MINUS).
+
+The button combo can be changed in the Aroma Config Menu.
 
 ## Features
-  - Scans `sd:/wiiu/apps` recursively for `.wuhb` and `.rpx` homebrew
-  - Navigate apps with D-Pad left/right; launch with `A`
-  - Add a quick favorite with `Y` to create a dedicated menu item
-  - Remove a quick favorite with `X` on the quick item
+- Scans `sd:/wiiu/apps` recursively for `.wuhb` and `.rpx` homebrew
 
-  ## Usage
-  - Open the plugin config menu
-  - Select “Launch homebrew” and browse with D-Pad left/right
-  - Press `A` to launch the selected app
-  - Press `Y` on selected homebrew to create a quick favorite for the current app
-    - Close and reopen the config menu to see the new favorite
-  - Press `X` on a quick favorite to remove it
-    - Close and reopen the config menu for the list to update
+##
 
 ## Requirements
 - devkitPro toolchain installed and `DEVKITPRO` environment variable set
@@ -33,5 +24,5 @@ An Aroma plugin for loading homebrew though the config menu:
 - Copy `HomebrewLoader.wps` to `sd:/wiiu/environments/aroma/plugins`
 
 ## Credits
-- Thanks to [@Maschell](https://github.com/Maschell) for WUPS and WUMS
+- Thanks to [@Maschell](https://github.com/Maschell) for WUPS, WUMS
 - The [@devkitpro](https://github.com/devkitPro) team for WUT

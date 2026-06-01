@@ -1,30 +1,77 @@
- #include "utils/logger.h"
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
 #include <stdio.h>
- #include <wups.h>
- #include <wups/storage.h>
- #include <wups/config_api.h>
- #include "config/WUPSConfigItemLaunchApp.h"
- 
- WUPS_PLUGIN_NAME("Homebrew Loader");
- WUPS_PLUGIN_DESCRIPTION("Browse and load homebrew from sd:/wiiu/apps");
- WUPS_PLUGIN_VERSION("v0.1");
- WUPS_PLUGIN_AUTHOR("SudoTronics");
- WUPS_PLUGIN_LICENSE("GPL");
- 
- WUPS_USE_WUT_DEVOPTAB();
- WUPS_USE_STORAGE("homebrew_loader");
-WUPSConfigCategoryHandle gHomebrewRootCategory;
+#include <wups.h>
+#include <wups/storage.h>
+#include <wups/function_patching.h>
+#include <wups/button_combo/api.h>
+#include <wups/config_api.h>
+#include <wups/config/WUPSConfigItemButtonCombo.h>
+#include "menu/cache.h"
+#include "menu/menu.h"
+#include <gx2/surface.h>
+#include <gx2/display.h>
+
+WUPS_PLUGIN_NAME("Homebrew Loader");
+WUPS_PLUGIN_DESCRIPTION("Browse and load homebrew from sd:/wiiu/apps");
+WUPS_PLUGIN_VERSION("v1.2");
+WUPS_PLUGIN_AUTHOR("SudoTronics");
+WUPS_PLUGIN_LICENSE("GPL");
+
+WUPS_USE_WUT_DEVOPTAB();
+WUPS_USE_STORAGE("homebrew_loader");
+
+typedef struct {
+    void *buffer;
+    uint32_t buffer_size;
+    int32_t mode;
+    GX2SurfaceFormat surface_format;
+    GX2BufferingMode buffering_mode;
+} StoredBuffer;
+
+static StoredBuffer gStoredTVBuffer;
+static StoredBuffer gStoredDRCBuffer;
+
+StoredBuffer *Menu_GetStoredTVBuffer(void) { return &gStoredTVBuffer; }
+StoredBuffer *Menu_GetStoredDRCBuffer(void) { return &gStoredDRCBuffer; }
+
+DECL_FUNCTION(void, GX2SetTVBuffer_hook, void *buffer, uint32_t buffer_size,
+              int32_t tv_render_mode, GX2SurfaceFormat format,
+              GX2BufferingMode buffering_mode) {
+    gStoredTVBuffer.buffer = buffer;
+    gStoredTVBuffer.buffer_size = buffer_size;
+    gStoredTVBuffer.mode = tv_render_mode;
+    gStoredTVBuffer.surface_format = format;
+    gStoredTVBuffer.buffering_mode = buffering_mode;
+    real_GX2SetTVBuffer_hook(buffer, buffer_size, tv_render_mode, format, buffering_mode);
+}
+
+WUPS_MUST_REPLACE(GX2SetTVBuffer_hook, WUPS_LOADER_LIBRARY_GX2, GX2SetTVBuffer);
+
+DECL_FUNCTION(void, GX2SetDRCBuffer_hook, void *buffer, uint32_t buffer_size,
+              uint32_t drc_mode, GX2SurfaceFormat surface_format,
+              GX2BufferingMode buffering_mode) {
+    gStoredDRCBuffer.buffer = buffer;
+    gStoredDRCBuffer.buffer_size = buffer_size;
+    gStoredDRCBuffer.mode = drc_mode;
+    gStoredDRCBuffer.surface_format = surface_format;
+    gStoredDRCBuffer.buffering_mode = buffering_mode;
+    real_GX2SetDRCBuffer_hook(buffer, buffer_size, drc_mode, surface_format, buffering_mode);
+}
+WUPS_MUST_REPLACE(GX2SetDRCBuffer_hook, WUPS_LOADER_LIBRARY_GX2, GX2SetDRCBuffer);
+
 typedef struct QuickFav {
     char *identifier;
     char *displayName;
     char *path;
 } QuickFav;
-static QuickFav s_quickFavs[32];
-static int s_quickFavCount = 0;
+
+#define MAX_QUICK_FAVS 32
+QuickFav s_quickFavs[MAX_QUICK_FAVS];
+int s_quickFavCount = 0;
 static const char *QUICK_FAV_COUNT_KEY = "quickFavCount";
+
 static void storeBlocks(const char *prefix, const char *label, int index, const char *s) {
     if (!s) return;
     char key[128];
@@ -44,6 +91,7 @@ static void storeBlocks(const char *prefix, const char *label, int index, const 
         WUPSStorageAPI_StoreU32(NULL, key, v);
     }
 }
+
 static char *loadBlocks(const char *prefix, const char *label, int index) {
     char key[128];
     uint32_t lenU32 = 0;
@@ -71,6 +119,7 @@ static char *loadBlocks(const char *prefix, const char *label, int index) {
     out[len] = 0;
     return out;
 }
+
 static void SaveQuickFavorites(void) {
     WUPSStorageAPI_StoreU32(NULL, QUICK_FAV_COUNT_KEY, (uint32_t)s_quickFavCount);
     for (int i = 0; i < s_quickFavCount; i++) {
@@ -80,6 +129,7 @@ static void SaveQuickFavorites(void) {
     }
     WUPSStorageAPI_SaveStorage(false);
 }
+
 static void FreeQuickFavorites(void) {
     for (int i = 0; i < s_quickFavCount; i++) {
         free(s_quickFavs[i].identifier);
@@ -91,6 +141,7 @@ static void FreeQuickFavorites(void) {
     }
     s_quickFavCount = 0;
 }
+
 static void LoadQuickFavorites(void) {
     FreeQuickFavorites();
     uint32_t countU32 = 0;
@@ -98,7 +149,7 @@ static void LoadQuickFavorites(void) {
         return;
     }
     int count = (int)countU32;
-    if (count > (int)(sizeof(s_quickFavs) / sizeof(s_quickFavs[0]))) count = (int)(sizeof(s_quickFavs) / sizeof(s_quickFavs[0]));
+    if (count > MAX_QUICK_FAVS) count = MAX_QUICK_FAVS;
     for (int i = 0; i < count; i++) {
         char *id = loadBlocks("quickFav", "id", i);
         char *dn = loadBlocks("quickFav", "dn", i);
@@ -115,9 +166,18 @@ static void LoadQuickFavorites(void) {
         }
     }
 }
+
+bool IsPathFavorited(const char *path) {
+    if (!path) return false;
+    for (int i = 0; i < s_quickFavCount; i++) {
+        if (s_quickFavs[i].path && strcmp(s_quickFavs[i].path, path) == 0) return true;
+    }
+    return false;
+}
+
 void RegisterQuickFavorite(const char *identifier, const char *displayName, const char *path) {
     if (!identifier || !displayName || !path) return;
-    if (s_quickFavCount >= (int)(sizeof(s_quickFavs) / sizeof(s_quickFavs[0]))) return;
+    if (s_quickFavCount >= MAX_QUICK_FAVS) return;
     for (int i = 0; i < s_quickFavCount; i++) {
         if (strcmp(s_quickFavs[i].path, path) == 0) return;
     }
@@ -136,10 +196,9 @@ void RegisterQuickFavorite(const char *identifier, const char *displayName, cons
         return;
     }
     s_quickFavCount++;
-    DEBUG_FUNCTION_LINE_INFO("Quick favorite registered: %s", path);
     SaveQuickFavorites();
 }
- 
+
 void RemoveQuickFavoriteByPath(const char *path) {
     if (!path) return;
     for (int i = 0; i < s_quickFavCount; i++) {
@@ -154,68 +213,91 @@ void RemoveQuickFavoriteByPath(const char *path) {
             s_quickFavs[s_quickFavCount - 1].displayName = NULL;
             s_quickFavs[s_quickFavCount - 1].path        = NULL;
             s_quickFavCount--;
-            DEBUG_FUNCTION_LINE_INFO("Quick favorite removed: %s", path);
             SaveQuickFavorites();
             break;
         }
     }
 }
 
- static WUPSConfigAPICallbackStatus ConfigMenuOpenedCallback(WUPSConfigCategoryHandle root) {
-   gHomebrewRootCategory = root;
-   const char *apps_root = "sd:/wiiu/apps";
-     if (WUPSConfigItemLaunchApp_AddToCategory(root,
-                                               "launchApp",
-                                               "Launch homebrew",
-                                               apps_root,
-                                               (LaunchAppValueChangedCallback) NULL) != WUPSCONFIG_API_RESULT_SUCCESS) {
-         DEBUG_FUNCTION_LINE_ERR("Failed to add 'Launch homebrew' item");
-     }
-     for (int i = 0; i < s_quickFavCount; i++) {
-         if (s_quickFavs[i].identifier && s_quickFavs[i].displayName && s_quickFavs[i].path) {
-             if (WUPSConfigItemLaunchApp_AddToCategory(root,
-                                                       s_quickFavs[i].identifier,
-                                                       s_quickFavs[i].displayName,
-                                                       s_quickFavs[i].path,
-                                                       (LaunchAppValueChangedCallback) NULL) != WUPSCONFIG_API_RESULT_SUCCESS) {
-                 DEBUG_FUNCTION_LINE_ERR("Failed to add quick item: %s", s_quickFavs[i].displayName);
-             } else {
-                 DEBUG_FUNCTION_LINE_INFO("Quick item added: %s", s_quickFavs[i].displayName);
-             }
-         }
-     }
-     return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
- }
- 
- static void ConfigMenuClosedCallback() {
-    gHomebrewRootCategory.handle = NULL;
-    WUPSStorageAPI_SaveStorage(false);
- }
- 
- INITIALIZE_PLUGIN() {
-     initLogging();
-     DEBUG_FUNCTION_LINE_INFO("INITIALIZE_PLUGIN of HomebrewLoader");
- 
-     WUPSConfigAPIOptionsV1 configOptions = {.name = "Homebrew Loader"};
-     if (WUPSConfigAPI_Init(configOptions, ConfigMenuOpenedCallback, ConfigMenuClosedCallback) != WUPSCONFIG_API_RESULT_SUCCESS) {
-         DEBUG_FUNCTION_LINE_ERR("Failed to init config api");
-     }
+#define OPEN_COMBO_DEFAULT (VPAD_BUTTON_L | VPAD_BUTTON_R | VPAD_BUTTON_DOWN)
+#define OPEN_COMBO_STORAGE_KEY "openCombo"
+
+static WUPSButtonCombo_ComboHandle g_comboHandle;
+static uint32_t g_currentCombo = OPEN_COMBO_DEFAULT;
+static bool s_menuOpen = false;
+
+static void openMenu(void) {
+    if (s_menuOpen) return;
+    s_menuOpen = true;
+    Menu_Open();
+    s_menuOpen = false;
+}
+
+static void comboCallback(WUPSButtonCombo_ControllerTypes triggeredBy,
+                           WUPSButtonCombo_ComboHandle handle,
+                           void *context) {
+    (void)triggeredBy;
+    (void)handle;
+    (void)context;
+    openMenu();
+}
+
+static void ConfigComboValueChanged(ConfigItemButtonCombo *item, uint32_t newCombo) {
+    (void)item;
+    g_currentCombo = newCombo;
+    WUPSButtonComboAPI_UpdateButtonCombo(g_comboHandle, (WUPSButtonCombo_Buttons)newCombo, NULL);
+}
+
+static WUPSConfigAPICallbackStatus ConfigMenuOpened(WUPSConfigCategoryHandle root) {
+    WUPSConfigItemButtonCombo_AddToCategory(root,
+        OPEN_COMBO_STORAGE_KEY, "Open Menu Combo",
+        (WUPSButtonCombo_Buttons)g_currentCombo, g_comboHandle,
+        ConfigComboValueChanged);
+    return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
+}
+
+static void ConfigMenuClosed(void) {}
+
+INITIALIZE_PLUGIN() {
+    WUPSConfigAPIOptionsV1 configOpts = { .name = "Homebrew Loader" };
+    WUPSConfigAPI_Init(configOpts, ConfigMenuOpened, ConfigMenuClosed);
+
+    uint32_t saved = 0;
+    if (WUPSStorageAPI_GetU32(NULL, OPEN_COMBO_STORAGE_KEY, &saved) == WUPS_STORAGE_ERROR_SUCCESS) {
+        if (saved != 0) {
+            g_currentCombo = saved;
+        }
+    }
+
     LoadQuickFavorites();
- }
- 
- DEINITIALIZE_PLUGIN() {
-     DEBUG_FUNCTION_LINE_INFO("DEINITIALIZE_PLUGIN of HomebrewLoader");
- }
- 
- ON_APPLICATION_START() {
-     initLogging();
-     DEBUG_FUNCTION_LINE_INFO("ON_APPLICATION_START of HomebrewLoader");
- }
- 
- ON_APPLICATION_ENDS() {
-     deinitLogging();
- }
- 
- ON_APPLICATION_REQUESTS_EXIT() {
-     DEBUG_FUNCTION_LINE_INFO("ON_APPLICATION_REQUESTS_EXIT of HomebrewLoader");
- }
+    Menu_Init();
+
+    WUPSButtonCombo_ComboStatus status;
+    WUPSButtonComboAPI_AddButtonComboPressDownObserver(
+        "Open Menu",
+        (WUPSButtonCombo_Buttons)g_currentCombo,
+        comboCallback,
+        NULL,
+        &g_comboHandle,
+        &status
+    );
+}
+
+DEINITIALIZE_PLUGIN() {
+    WUPSButtonComboAPI_RemoveButtonCombo(g_comboHandle);
+}
+
+ON_APPLICATION_START() {
+}
+
+ON_APPLICATION_ENDS() {
+}
+
+ON_APPLICATION_REQUESTS_EXIT() {
+}
+
+ON_ACQUIRED_FOREGROUND() {
+}
+
+ON_RELEASE_FOREGROUND() {
+}
