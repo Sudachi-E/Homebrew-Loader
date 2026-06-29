@@ -35,7 +35,7 @@ endif
 CXXFLAGS += -O2
 CFLAGS += -O2
 
-LIBS	:= -lwups -lwut -lrpxloader -lmappedmemory
+LIBS	:= -lwups -lwut -lrpxloader -lmappedmemory -lm
 
 LIBDIRS	:= $(PORTLIBS) $(WUPS_ROOT) $(WUT_ROOT) $(WUMS_ROOT)
 

@@ -1,6 +1,7 @@
 #include "menu.h"
 #include "cache.h"
 #include "../homebrew/scanner.h"
+#include "../utils/schrift.h"
 #include <coreinit/screen.h>
 #include <coreinit/cache.h>
 #include <coreinit/thread.h>
@@ -93,15 +94,13 @@ static bool tvFromDefaultHeap = false;
 static bool drcFromDefaultHeap = false;
 static uint32_t s_tvWidth = 1280;
 static uint32_t s_tvHeight = 720;
-static uint32_t s_drcWidth = 896;
 static float s_tvScale = 1.5f;
 static bool s_isBackBuffer = false;
 
-static int s_fontScaleY = 2;
 static int s_rowHeight = 24;
-static int s_cols = 100;
-static int s_rows = 20;
-
+#define DRC_VISIBLE_W 854
+#define DRC_VISIBLE_H 480
+#define DRC_STRIDE 896
 #define TV_WIDTH_DRC_REF 854
 
 static void detect_tv_scale(void) {
@@ -140,28 +139,12 @@ static void detect_backbuffer(void) {
     buf[0] = saved;
 }
 
-static void fb_clear(void) {
-    if (drcFramebuffer && drcFramebufferSize > 0) {
-        uint32_t half = drcFramebufferSize / 2;
-        uint32_t *buf = (uint32_t *)((uint8_t *)drcFramebuffer + (s_isBackBuffer ? half : 0));
-        uint32_t pixels = half / 4;
-        for (uint32_t i = 0; i < pixels; i++) buf[i] = 0x1E1E2E00;
-    }
-
-    if (tvFramebuffer && tvFramebufferSize > 0) {
-        uint32_t half = tvFramebufferSize / 2;
-        uint32_t *buf = (uint32_t *)((uint8_t *)tvFramebuffer + (s_isBackBuffer ? half : 0));
-        uint32_t pixels = half / 4;
-        for (uint32_t i = 0; i < pixels; i++) buf[i] = 0x1E1E2E00;
-    }
-}
-
 static void fb_put_pixel(int x, int y, uint32_t color) {
     if (drcFramebuffer && drcFramebufferSize > 0) {
-        if (x >= 0 && x < 854 && y >= 0 && y < 480) {
+        if (x >= 0 && x < DRC_VISIBLE_W && y >= 0 && y < DRC_VISIBLE_H) {
             uint32_t half = drcFramebufferSize / 2;
             uint32_t *buf = (uint32_t *)((uint8_t *)drcFramebuffer + (s_isBackBuffer ? half : 0));
-            buf[y * s_drcWidth + x] = color;
+            buf[y * DRC_STRIDE + x] = color;
         }
     }
     if (tvFramebuffer && tvFramebufferSize > 0) {
@@ -181,9 +164,70 @@ static void fb_put_pixel(int x, int y, uint32_t color) {
     }
 }
 
+static void fb_put_pixel_alpha(int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t alpha) {
+    if (alpha == 0) return;
+    if (drcFramebuffer && drcFramebufferSize > 0) {
+        if (x >= 0 && x < DRC_VISIBLE_W && y >= 0 && y < DRC_VISIBLE_H) {
+            uint32_t half = drcFramebufferSize / 2;
+            uint32_t *buf = (uint32_t *)((uint8_t *)drcFramebuffer + (s_isBackBuffer ? half : 0));
+            uint32_t idx = (uint32_t)(y * DRC_STRIDE + x);
+            if (alpha == 0xFF) {
+                buf[idx] = ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | 0x00;
+            } else {
+                uint32_t cur = buf[idx];
+                uint32_t inv = 255 - alpha;
+                uint32_t nr = ((uint32_t)r * alpha + ((cur >> 24) & 0xFF) * inv) / 255;
+                uint32_t ng = ((uint32_t)g * alpha + ((cur >> 16) & 0xFF) * inv) / 255;
+                uint32_t nb = ((uint32_t)b * alpha + ((cur >> 8) & 0xFF) * inv) / 255;
+                buf[idx] = (nr << 24) | (ng << 16) | (nb << 8) | 0x00;
+            }
+        }
+    }
+    if (tvFramebuffer && tvFramebufferSize > 0) {
+        int startX = (int)(x * s_tvScale);
+        int startY = (int)(y * s_tvScale);
+        int endX = (int)((x + 1) * s_tvScale);
+        int endY = (int)((y + 1) * s_tvScale);
+        uint32_t half = tvFramebufferSize / 2;
+        uint32_t *buf = (uint32_t *)((uint8_t *)tvFramebuffer + (s_isBackBuffer ? half : 0));
+        for (int yy = startY; yy < endY; yy++) {
+            if (yy < 0 || yy >= (int)s_tvHeight) continue;
+            for (int xx = startX; xx < endX; xx++) {
+                if (xx < 0 || xx >= (int)s_tvWidth) continue;
+                uint32_t idx = (uint32_t)(yy * s_tvWidth + xx);
+                if (alpha == 0xFF) {
+                    buf[idx] = ((uint32_t)r << 24) | ((uint32_t)g << 16) | ((uint32_t)b << 8) | 0x00;
+                } else {
+                    uint32_t cur = buf[idx];
+                    uint32_t inv = 255 - alpha;
+                    uint32_t nr = ((uint32_t)r * alpha + ((cur >> 24) & 0xFF) * inv) / 255;
+                    uint32_t ng = ((uint32_t)g * alpha + ((cur >> 16) & 0xFF) * inv) / 255;
+                    uint32_t nb = ((uint32_t)b * alpha + ((cur >> 8) & 0xFF) * inv) / 255;
+                    buf[idx] = (nr << 24) | (ng << 16) | (nb << 8) | 0x00;
+                }
+            }
+        }
+    }
+}
+
+static void fb_clear(void) {
+    if (drcFramebuffer && drcFramebufferSize > 0) {
+        uint32_t half = drcFramebufferSize / 2;
+        uint32_t *buf = (uint32_t *)((uint8_t *)drcFramebuffer + (s_isBackBuffer ? half : 0));
+        uint32_t pixels = half / 4;
+        for (uint32_t i = 0; i < pixels; i++) buf[i] = 0x1E1E2E00;
+    }
+    if (tvFramebuffer && tvFramebufferSize > 0) {
+        uint32_t half = tvFramebufferSize / 2;
+        uint32_t *buf = (uint32_t *)((uint8_t *)tvFramebuffer + (s_isBackBuffer ? half : 0));
+        uint32_t pixels = half / 4;
+        for (uint32_t i = 0; i < pixels; i++) buf[i] = 0x1E1E2E00;
+    }
+}
+
 #define HEADER_ROW      0
 #define LIST_START_ROW  2
-#define FOOTER_ROW      (s_rows - 1)
+#define FOOTER_ROW      19
 
 #define COLOR_WHITE     0xFFFFFF00
 #define COLOR_BLUE      0x89B4FA00
@@ -193,208 +237,212 @@ static void fb_put_pixel(int x, int y, uint32_t color) {
 #define COLOR_BG        0x1E1E2E00
 #define COLOR_HIGHLIGHT 0x45475A00
 
-static const uint8_t FONT[95][8] = {
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00},
-    {0x18,0x18,0x18,0x18,0x18,0x00,0x18,0x00},
-    {0x6C,0x6C,0x24,0x00,0x00,0x00,0x00,0x00},
-    {0x6C,0x6C,0xFE,0x6C,0xFE,0x6C,0x6C,0x00},
-    {0x18,0x3E,0x60,0x3C,0x06,0x7C,0x18,0x00},
-    {0x00,0xC6,0xCC,0x18,0x30,0x66,0xC6,0x00},
-    {0x38,0x6C,0x38,0x76,0xDC,0xCC,0x76,0x00},
-    {0x18,0x18,0x30,0x00,0x00,0x00,0x00,0x00},
-    {0x0C,0x18,0x30,0x30,0x30,0x18,0x0C,0x00},
-    {0x30,0x18,0x0C,0x0C,0x0C,0x18,0x30,0x00},
-    {0x00,0x66,0x3C,0xFF,0x3C,0x66,0x00,0x00},
-    {0x00,0x18,0x18,0x7E,0x18,0x18,0x00,0x00},
-    {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x30},
-    {0x00,0x00,0x00,0x7E,0x00,0x00,0x00,0x00},
-    {0x00,0x00,0x00,0x00,0x00,0x18,0x18,0x00},
-    {0x06,0x0C,0x18,0x30,0x60,0xC0,0x80,0x00},
-    {0x7C,0xCE,0xDE,0xF6,0xE6,0xC6,0x7C,0x00},
-    {0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0x00},
-    {0x7C,0xC6,0x06,0x1C,0x30,0x66,0xFE,0x00},
-    {0x7C,0xC6,0x06,0x3C,0x06,0xC6,0x7C,0x00},
-    {0x1C,0x3C,0x6C,0xCC,0xFE,0x0C,0x1E,0x00},
-    {0xFE,0xC0,0xFC,0x06,0x06,0xC6,0x7C,0x00},
-    {0x38,0x60,0xC0,0xFC,0xC6,0xC6,0x7C,0x00},
-    {0xFE,0xC6,0x0C,0x18,0x30,0x30,0x30,0x00},
-    {0x7C,0xC6,0xC6,0x7C,0xC6,0xC6,0x7C,0x00},
-    {0x7C,0xC6,0xC6,0x7E,0x06,0x0C,0x78,0x00},
-    {0x00,0x18,0x18,0x00,0x00,0x18,0x18,0x00},
-    {0x00,0x18,0x18,0x00,0x18,0x18,0x18,0x30},
-    {0x06,0x0C,0x18,0x30,0x18,0x0C,0x06,0x00},
-    {0x00,0x00,0x7E,0x00,0x00,0x7E,0x00,0x00},
-    {0x60,0x30,0x18,0x0C,0x18,0x30,0x60,0x00},
-    {0x7C,0xC6,0x0C,0x18,0x18,0x00,0x18,0x00},
-    {0x7C,0xC6,0xDE,0xDE,0xDE,0xC0,0x78,0x00},
-    {0x38,0x6C,0xC6,0xFE,0xC6,0xC6,0xC6,0x00},
-    {0xFC,0x66,0x66,0x7C,0x66,0x66,0xFC,0x00},
-    {0x3C,0x66,0xC0,0xC0,0xC0,0x66,0x3C,0x00},
-    {0xF8,0x6C,0x66,0x66,0x66,0x6C,0xF8,0x00},
-    {0xFE,0x62,0x68,0x78,0x68,0x62,0xFE,0x00},
-    {0xFE,0x62,0x68,0x78,0x68,0x60,0xF0,0x00},
-    {0x3C,0x66,0xC0,0xCE,0x66,0x66,0x3A,0x00},
-    {0xC6,0xC6,0xC6,0xFE,0xC6,0xC6,0xC6,0x00},
-    {0x3C,0x18,0x18,0x18,0x18,0x18,0x3C,0x00},
-    {0x1E,0x0C,0x0C,0x0C,0xCC,0xCC,0x78,0x00},
-    {0xE6,0x66,0x6C,0x78,0x6C,0x66,0xE6,0x00},
-    {0xF0,0x60,0x60,0x60,0x62,0x66,0xFE,0x00},
-    {0xC6,0xEE,0xFE,0xFE,0xD6,0xC6,0xC6,0x00},
-    {0xC6,0xE6,0xF6,0xDE,0xCE,0xC6,0xC6,0x00},
-    {0x7C,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00},
-    {0xFC,0x66,0x66,0x7C,0x60,0x60,0xF0,0x00},
-    {0x7C,0xC6,0xC6,0xC6,0xD6,0xDE,0x7C,0x06},
-    {0xFC,0x66,0x66,0x7C,0x6C,0x66,0xE6,0x00},
-    {0x7C,0xC6,0x60,0x38,0x0C,0xC6,0x7C,0x00},
-    {0x7E,0x7E,0x5A,0x18,0x18,0x18,0x3C,0x00},
-    {0xC6,0xC6,0xC6,0xC6,0xC6,0xC6,0x7C,0x00},
-    {0xC6,0xC6,0xC6,0xC6,0x6C,0x6C,0x38,0x00},
-    {0xC6,0xC6,0xC6,0xD6,0xFE,0xEE,0xC6,0x00},
-    {0xC6,0xC6,0x6C,0x38,0x6C,0xC6,0xC6,0x00},
-    {0x66,0x66,0x66,0x3C,0x18,0x18,0x3C,0x00},
-    {0xFE,0xC6,0x8C,0x18,0x32,0x66,0xFE,0x00},
-    {0x3C,0x30,0x30,0x30,0x30,0x30,0x3C,0x00},
-    {0xC0,0x60,0x30,0x18,0x0C,0x06,0x02,0x00},
-    {0x3C,0x0C,0x0C,0x0C,0x0C,0x0C,0x3C,0x00},
-    {0x10,0x38,0x6C,0xC6,0x00,0x00,0x00,0x00},
-    {0x00,0x00,0x00,0x00,0x00,0x00,0x00,0xFF},
-    {0x30,0x18,0x0C,0x00,0x00,0x00,0x00,0x00},
-    {0x00,0x00,0x78,0x0C,0x7C,0xCC,0x76,0x00},
-    {0xE0,0x60,0x7C,0x66,0x66,0x66,0xDC,0x00},
-    {0x00,0x00,0x7C,0xC6,0xC0,0xC6,0x7C,0x00},
-    {0x1C,0x0C,0x7C,0xCC,0xCC,0xCC,0x76,0x00},
-    {0x00,0x00,0x7C,0xC6,0xFE,0xC0,0x7C,0x00},
-    {0x1C,0x36,0x30,0x78,0x30,0x30,0x78,0x00},
-    {0x00,0x00,0x76,0xCC,0xCC,0x7C,0x0C,0x78},
-    {0xE0,0x60,0x6C,0x76,0x66,0x66,0xE6,0x00},
-    {0x18,0x00,0x38,0x18,0x18,0x18,0x3C,0x00},
-    {0x06,0x00,0x0E,0x06,0x06,0x66,0x66,0x3C},
-    {0xE0,0x60,0x66,0x6C,0x78,0x6C,0xE6,0x00},
-    {0x38,0x18,0x18,0x18,0x18,0x18,0x3C,0x00},
-    {0x00,0x00,0xEC,0xFE,0xD6,0xD6,0xD6,0x00},
-    {0x00,0x00,0xDC,0x66,0x66,0x66,0x66,0x00},
-    {0x00,0x00,0x7C,0xC6,0xC6,0xC6,0x7C,0x00},
-    {0x00,0x00,0xDC,0x66,0x66,0x7C,0x60,0xF0},
-    {0x00,0x00,0x76,0xCC,0xCC,0x7C,0x0C,0x1E},
-    {0x00,0x00,0xDC,0x76,0x60,0x60,0xF0,0x00},
-    {0x00,0x00,0x7C,0xC0,0x7C,0x06,0xFC,0x00},
-    {0x30,0x30,0x7C,0x30,0x30,0x36,0x1C,0x00},
-    {0x00,0x00,0xCC,0xCC,0xCC,0xCC,0x76,0x00},
-    {0x00,0x00,0xC6,0xC6,0xC6,0x6C,0x38,0x00},
-    {0x00,0x00,0xC6,0xD6,0xD6,0xFE,0x6C,0x00},
-    {0x00,0x00,0xC6,0x6C,0x38,0x6C,0xC6,0x00},
-    {0x00,0x00,0xC6,0xC6,0xC6,0x7E,0x06,0x7C},
-    {0x00,0x00,0xFE,0x8C,0x18,0x32,0xFE,0x00},
-    {0x0E,0x18,0x18,0x70,0x18,0x18,0x0E,0x00},
-    {0x18,0x18,0x18,0x00,0x18,0x18,0x18,0x00},
-    {0x70,0x18,0x18,0x0E,0x18,0x18,0x70,0x00},
-    {0x76,0xDC,0x00,0x00,0x00,0x00,0x00,0x00},
-};
+static SFT s_sft;
+static bool s_fontOk = false;
 
-static void draw_char(int sx, int sy, char c, uint32_t color) {
-    int idx = (unsigned char)c - 32;
-    if (idx < 0 || idx >= 95) return;
-    const uint8_t *glyph = FONT[idx];
-    for (int gy = 0; gy < 8; gy++) {
-        for (int gx = 0; gx < 8; gx++) {
-            if (glyph[gy] & (0x80 >> gx)) {
-                int px = sx + gx;
-                int py = sy + gy * s_fontScaleY;
-                fb_put_pixel(px, py, color);
-                fb_put_pixel(px, py + 1, color);
-            }
-        }
+#define GLYPH_CACHE_SIZE 128
+typedef struct {
+    uint32_t codepoint;
+    bool valid;
+    SFT_GMetrics metrics;
+    uint8_t *pixels;
+    uint16_t texWidth;
+    uint16_t texHeight;
+} GlyphEntry;
+static GlyphEntry s_glyphCache[GLYPH_CACHE_SIZE];
+static int s_glyphCount = 0;
+
+static int s_charWidth = 11;
+static int s_fontPixelHeight = 18;
+static int s_ascenderPx = 14;
+
+static uint32_t utf8_decode(const char **s) {
+    unsigned char c = (unsigned char)**s;
+    if (c < 0x80) {
+        (*s)++;
+        return c;
     }
+    if ((c & 0xE0) == 0xC0) {
+        unsigned char c2 = (unsigned char)(*s)[1];
+        *s += 2;
+        if ((c2 & 0xC0) != 0x80) return 0xFFFD;
+        return ((c & 0x1F) << 6) | (c2 & 0x3F);
+    }
+    if ((c & 0xF0) == 0xE0) {
+        unsigned char c2 = (unsigned char)(*s)[1];
+        unsigned char c3 = (unsigned char)(*s)[2];
+        *s += 3;
+        if ((c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80) return 0xFFFD;
+        return ((c & 0x0F) << 12) | ((c2 & 0x3F) << 6) | (c3 & 0x3F);
+    }
+    if ((c & 0xF8) == 0xF0) {
+        unsigned char c2 = (unsigned char)(*s)[1];
+        unsigned char c3 = (unsigned char)(*s)[2];
+        unsigned char c4 = (unsigned char)(*s)[3];
+        *s += 4;
+        if ((c2 & 0xC0) != 0x80 || (c3 & 0xC0) != 0x80 || (c4 & 0xC0) != 0x80) return 0xFFFD;
+        return ((c & 0x07) << 18) | ((c2 & 0x3F) << 12) | ((c3 & 0x3F) << 6) | (c4 & 0x3F);
+    }
+    (*s)++;
+    return 0xFFFD;
 }
 
-static size_t ascii_fold(char *out, size_t out_size, const char *in) {
-    size_t j = 0;
-    for (size_t i = 0; in[i] && j < out_size - 1; ) {
-        unsigned char c = (unsigned char)in[i];
-        if (c < 0x80) {
-            out[j++] = in[i++];
-        } else if ((c & 0xE0) == 0xC0 && (in[i + 1] & 0xC0) == 0x80) {
-            unsigned char c2 = (unsigned char)in[i + 1];
-            if (c == 0xC3) {
-                switch (c2) {
-                    case 0x80 ... 0x86: out[j] = 'A'; break;
-                    case 0x87:         out[j] = 'C'; break;
-                    case 0x88 ... 0x8B: out[j] = 'E'; break;
-                    case 0x8C ... 0x8F: out[j] = 'I'; break;
-                    case 0x90:         out[j] = 'D'; break;
-                    case 0x91:         out[j] = 'N'; break;
-                    case 0x92 ... 0x96: case 0x98: out[j] = 'O'; break;
-                    case 0x99 ... 0x9C: out[j] = 'U'; break;
-                    case 0x9D:         out[j] = 'Y'; break;
-                    case 0x9E:         out[j] = 'T'; break;
-                    case 0x9F:         out[j] = 's'; break;
-                    case 0xA0 ... 0xA6: out[j] = 'a'; break;
-                    case 0xA7:         out[j] = 'c'; break;
-                    case 0xA8 ... 0xAB: out[j] = 'e'; break;
-                    case 0xAC ... 0xAF: out[j] = 'i'; break;
-                    case 0xB0:         out[j] = 'd'; break;
-                    case 0xB1:         out[j] = 'n'; break;
-                    case 0xB2 ... 0xB6: case 0xB8: out[j] = 'o'; break;
-                    case 0xB9 ... 0xBC: out[j] = 'u'; break;
-                    case 0xBD:         out[j] = 'y'; break;
-                    case 0xBE:         out[j] = 't'; break;
-                    case 0xBF:         out[j] = 'y'; break;
-                    default:           out[j] = '?'; break;
-                }
-            } else {
-                out[j] = '?';
-            }
-            j++;
-            i += 2;
-        } else if ((c & 0xF0) == 0xE0) {
-            out[j++] = '?';
-            i += 3;
-        } else if ((c & 0xF8) == 0xF0) {
-            out[j++] = '?';
-            i += 4;
-        } else {
-            out[j++] = '?';
-            i++;
-        }
+static void glyph_cache_clear(void) {
+    for (int i = 0; i < GLYPH_CACHE_SIZE; i++) {
+        free(s_glyphCache[i].pixels);
     }
-    out[j] = '\0';
-    return j;
+    memset(s_glyphCache, 0, sizeof(s_glyphCache));
+    s_glyphCount = 0;
 }
 
-static void draw_text(int col, int row, const char *text, uint32_t color) {
+static void init_font(void) {
+    void *fontData;
+    uint32_t fontSize;
+    OSGetSharedData(OS_SHAREDDATATYPE_FONT_STANDARD, 0, &fontData, &fontSize);
+    if (!fontData || fontSize == 0) return;
+
+    SFT_Font *font = sft_loadmem(fontData, fontSize);
+    if (!font) return;
+
+    memset(&s_sft, 0, sizeof(s_sft));
+    s_sft.font = font;
+    s_sft.xScale = 18;
+    s_sft.yScale = 18;
+    s_sft.flags = SFT_DOWNWARD_Y;
+
+    SFT_Glyph gid;
+    SFT_GMetrics m;
+    if (sft_lookup(&s_sft, (SFT_UChar)'n', &gid) >= 0 && sft_gmetrics(&s_sft, gid, &m) >= 0) {
+        s_charWidth = (int)(m.advanceWidth + 0.5);
+    }
+    if (s_charWidth < 8) s_charWidth = 8;
+    if (s_charWidth > 16) s_charWidth = 16;
+
+    SFT_LMetrics lm;
+    if (sft_lmetrics(&s_sft, &lm) >= 0) {
+        s_fontPixelHeight = (int)(lm.ascender - lm.descender + 0.5);
+        s_ascenderPx = (int)(lm.ascender + 0.5);
+    }
+    if (s_fontPixelHeight < 12) s_fontPixelHeight = 12;
+    if (s_fontPixelHeight > 30) s_fontPixelHeight = 30;
+    if (s_ascenderPx < 8) s_ascenderPx = 8;
+    if (s_ascenderPx > 24) s_ascenderPx = 24;
+
+    glyph_cache_clear();
+    s_fontOk = true;
+}
+
+static void deinit_font(void) {
+    glyph_cache_clear();
+    if (s_sft.font) {
+        sft_freefont(s_sft.font);
+        s_sft.font = NULL;
+    }
+    s_fontOk = false;
+}
+
+static GlyphEntry *get_glyph(uint32_t codepoint) {
+    if (!s_fontOk) return NULL;
+    for (int i = 0; i < s_glyphCount; i++) {
+        if (s_glyphCache[i].valid && s_glyphCache[i].codepoint == codepoint)
+            return &s_glyphCache[i];
+    }
+    if (s_glyphCount >= GLYPH_CACHE_SIZE) {
+        s_glyphCount--;
+        free(s_glyphCache[s_glyphCount].pixels);
+        s_glyphCache[s_glyphCount].valid = false;
+    }
+    GlyphEntry *entry = &s_glyphCache[s_glyphCount++];
+    entry->codepoint = codepoint;
+    entry->valid = false;
+    entry->pixels = NULL;
+    SFT_Glyph gid;
+    if (sft_lookup(&s_sft, (SFT_UChar)codepoint, &gid) < 0) return entry;
+    if (sft_gmetrics(&s_sft, gid, &entry->metrics) < 0) return entry;
+    entry->texWidth = (entry->metrics.minWidth + 3) & ~3;
+    entry->texHeight = entry->metrics.minHeight;
+    if (entry->texWidth < 4) entry->texWidth = 4;
+    if (entry->texHeight < 4) entry->texHeight = 4;
+    entry->pixels = (uint8_t *)malloc(entry->texWidth * entry->texHeight);
+    if (!entry->pixels) return entry;
+    memset(entry->pixels, 0, entry->texWidth * entry->texHeight);
+    SFT_Image img = { .pixels = entry->pixels, .width = entry->texWidth, .height = entry->texHeight };
+    if (sft_render(&s_sft, gid, img) < 0) {
+        free(entry->pixels);
+        entry->pixels = NULL;
+        return entry;
+    }
+    entry->valid = true;
+    return entry;
+}
+
+static int render_glyph(int x, int y, uint32_t codepoint, uint32_t color) {
+    GlyphEntry *g = get_glyph(codepoint);
+    if (!g || !g->valid || !g->pixels) {
+        if (!s_fontOk) return 8;
+        return (int)(g ? g->metrics.advanceWidth + 0.5 : 8);
+    }
+    uint8_t fgR = (color >> 24) & 0xFF;
+    uint8_t fgG = (color >> 16) & 0xFF;
+    uint8_t fgB = (color >> 8) & 0xFF;
+    int bx = x + (int)(g->metrics.leftSideBearing + 0.5);
+    int by = y + g->metrics.yOffset;
+    uint8_t *src = g->pixels;
+    for (int j = 0; j < g->texHeight; j++) {
+        for (int i = 0; i < g->texWidth; i++) {
+            uint8_t alpha = src[j * g->texWidth + i];
+            if (alpha == 0) continue;
+            fb_put_pixel_alpha(bx + i, by + j, fgR, fgG, fgB, alpha);
+        }
+    }
+    return (int)(g->metrics.advanceWidth + 0.5);
+}
+
+static int text_width(const char *text) {
+    if (!text) return 0;
+    int w = 0;
+    while (*text) {
+        uint32_t cp = utf8_decode(&text);
+        GlyphEntry *g = get_glyph(cp);
+        if (g && g->valid)
+            w += (int)(g->metrics.advanceWidth + 0.5);
+        else
+            w += 8;
+    }
+    return w;
+}
+
+static void draw_text(int x, int y, const char *text, uint32_t color) {
     if (!text) return;
-    char folded[256];
-    ascii_fold(folded, sizeof(folded), text);
-    int sx = col * 8;
-    int sy = row * s_rowHeight + ((s_rowHeight - 8 * s_fontScaleY) / 2);
-    for (int i = 0; folded[i]; i++) {
-        draw_char(sx + i * 8, sy, folded[i], color);
+    int penX = x;
+    while (*text) {
+        uint32_t cp = utf8_decode(&text);
+        penX += render_glyph(penX, y, cp, color);
     }
 }
 
-static void draw_text_colored_part(int col, int row, const char *text, int numColored, uint32_t color) {
+static void draw_text_colored_part(int x, int y, const char *text, int numColored, uint32_t color) {
     if (!text) return;
-    char folded[256];
-    ascii_fold(folded, sizeof(folded), text);
-    int sx = col * 8;
-    int sy = row * s_rowHeight + ((s_rowHeight - 8 * s_fontScaleY) / 2);
-    int i;
-    for (i = 0; folded[i] && i < numColored; i++) {
-        draw_char(sx + i * 8, sy, folded[i], color);
-    }
-    for (; folded[i]; i++) {
-        draw_char(sx + i * 8, sy, folded[i], COLOR_WHITE);
+    int penX = x;
+    int count = 0;
+    while (*text) {
+        uint32_t cp = utf8_decode(&text);
+        uint32_t c = (count < numColored) ? color : COLOR_WHITE;
+        penX += render_glyph(penX, y, cp, c);
+        count++;
     }
 }
 
-static void draw_rect(int col, int row, int width, int height, uint32_t color) {
-    int sx = col * 8;
-    int sy = row * s_rowHeight;
-    for (int y = 0; y < height; y++) {
-        for (int x = 0; x < width; x++) {
-            fb_put_pixel(sx + x, sy + y, color);
+static void draw_rect(int x, int y, int w, int h, uint32_t color) {
+    for (int yy = y; yy < y + h; yy++) {
+        for (int xx = x; xx < x + w; xx++) {
+            fb_put_pixel(xx, yy, color);
         }
     }
+}
+
+static int row_y(int row) {
+    return row * s_rowHeight + ((s_rowHeight - s_fontPixelHeight) / 2) + s_ascenderPx;
 }
 
 static void normalize_app_name(char *buf, size_t bufSize, const char *name) {
@@ -509,8 +557,10 @@ void Menu_Open(void) {
     if (tvFramebuffer) {
         dc_set_pitch(SCREEN_TV, s_tvWidth);
     }
-    int maxVisible = s_rows - LIST_START_ROW - 1;
+    int maxVisible = FOOTER_ROW - LIST_START_ROW;
     OSEnableHomeButtonMenu(FALSE);
+
+    init_font();
 
     int selectedIndex = 0;
     int scrollOffset = 0;
@@ -522,11 +572,12 @@ void Menu_Open(void) {
 
         fb_clear();
 
-        draw_text(1, HEADER_ROW, "Homebrew Menu", COLOR_GREEN);
+        draw_text(8, row_y(HEADER_ROW), "Homebrew Menu", COLOR_GREEN);
         {
             char countStr[32];
             snprintf(countStr, sizeof(countStr), "%d apps", (int)list->count);
-            draw_text(s_cols - (int)strlen(countStr) - 1, HEADER_ROW, countStr, COLOR_BLUE);
+            int cw = text_width(countStr);
+            draw_text(DRC_VISIBLE_W - 8 - cw, row_y(HEADER_ROW), countStr, COLOR_BLUE);
         }
 
         for (int i = 0; i < maxVisible; i++) {
@@ -537,27 +588,29 @@ void Menu_Open(void) {
             char name[128];
             normalize_app_name(name, sizeof(name), app->name ? app->name : "Unknown");
 
+            int itemY = (LIST_START_ROW + i) * s_rowHeight;
             if (idx == selectedIndex) {
-                draw_rect(0, LIST_START_ROW + i, s_cols * 8, s_rowHeight, COLOR_HIGHLIGHT);
+                draw_rect(0, itemY, DRC_VISIBLE_W - 16, s_rowHeight, COLOR_HIGHLIGHT);
             }
 
             char line[160];
+            int lineY = row_y(LIST_START_ROW + i);
             if (IsPathFavorited(app->path)) {
                 snprintf(line, sizeof(line), " * %s", name);
-                draw_text_colored_part(1, LIST_START_ROW + i, line, 3, COLOR_YELLOW);
+                draw_text_colored_part(8, lineY, line, 3, COLOR_YELLOW);
             } else {
                 snprintf(line, sizeof(line), "   %s", name);
-                draw_text(1, LIST_START_ROW + i, line, COLOR_WHITE);
+                draw_text(8, lineY, line, COLOR_WHITE);
             }
         }
 
-        draw_text(1, FOOTER_ROW, "A:Launch  B:Close  Y:Fav  -:Refresh  L:Top  R:Bottom  DPAD:Nav", COLOR_GRAY);
+        draw_text(8, row_y(FOOTER_ROW), "\xEE\x80\x80:Launch  \xEE\x80\x81:Close  \xEE\x80\x83:Fav  \xEE\x81\x86:Refresh  \xEE\x80\x84:Top  \xEE\x80\x85:Bottom  \xEE\x81\xBD:Nav", COLOR_WHITE);
 
         if ((int)list->count > maxVisible) {
             int scrollMax = (int)list->count - maxVisible;
             float pct = (scrollMax > 0) ? (float)scrollOffset / scrollMax : 0;
-            int barY = LIST_START_ROW + (int)(pct * (maxVisible - 2));
-            draw_rect(s_cols - 1, barY, 2, 2, COLOR_GRAY);
+            int barRow = LIST_START_ROW + (int)(pct * (maxVisible - 2));
+            draw_rect(DRC_VISIBLE_W - 20, barRow * s_rowHeight, 2, 2, COLOR_GRAY);
         }
 
         if (tvFramebuffer) {
@@ -649,7 +702,7 @@ void Menu_Open(void) {
             } else if (strncmp(rp, "fs:/", 4) == 0) {
                 const char *vol = strstr(rp, "/vol/external01/");
                 if (vol) {
-                    rp = vol + 16; /* "/vol/external01/" */
+                    rp = vol + 16;
                 }
             }
             const char *launchPath = rp;
@@ -695,6 +748,8 @@ void Menu_Open(void) {
             scrollOffset = 0;
         }
     }
+
+    deinit_font();
 
     OSEnableHomeButtonMenu(homeWasEnabled);
     dc_restore(&savedDC);
