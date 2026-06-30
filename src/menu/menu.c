@@ -13,6 +13,7 @@
 #include <gx2/event.h>
 #include <vpad/input.h>
 #include <rpxloader/rpxloader.h>
+#include <notifications/notifications.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -463,19 +464,7 @@ bool Menu_Init(void) {
     return true;
 }
 
-void Menu_Open(void) {
-
-    const HomebrewAppList *list = Cache_GetAppList();
-    if (!list || list->count == 0) {
-        Cache_Refresh();
-        list = Cache_GetAppList();
-        if (!list || list->count == 0) {
-            return;
-        }
-    }
-    Cache_SortByFavorites();
-    list = Cache_GetAppList();
-
+static bool Menu_InitRenderer(void) {
     homeWasEnabled = OSIsHomeButtonMenuEnabled();
     dc_save(&savedDC);
 
@@ -504,15 +493,6 @@ void Menu_Open(void) {
         }
     }
 
-    if (!tvFramebuffer && MEMAllocFromDefaultHeapEx) {
-        tvFramebuffer = MEMAllocFromDefaultHeapEx(tvFramebufferSize, 0x100);
-        if (tvFramebuffer) tvFromDefaultHeap = true;
-    }
-    if (!drcFramebuffer && MEMAllocFromDefaultHeapEx) {
-        drcFramebuffer = MEMAllocFromDefaultHeapEx(drcFramebufferSize, 0x100);
-        if (drcFramebuffer) drcFromDefaultHeap = true;
-    }
-
     if (!tvFramebuffer || !drcFramebuffer) {
         if (!tvFramebuffer && storedTV && storedTV->buffer && storedTV->buffer_size >= tvFramebufferSize) {
             tvFramebuffer = storedTV->buffer;
@@ -524,22 +504,39 @@ void Menu_Open(void) {
         }
     }
 
-    if (!tvFramebuffer && !drcFramebuffer) {
+    if (!tvFramebuffer || !drcFramebuffer) {
+        if (tvFramebuffer) {
+            if (tvFromMapped && MEMFreeToMappedMemory) MEMFreeToMappedMemory(tvFramebuffer);
+            else if (tvFromDefaultHeap && MEMFreeToDefaultHeap) MEMFreeToDefaultHeap(tvFramebuffer);
+        }
+        if (drcFramebuffer) {
+            if (drcFromMapped && MEMFreeToMappedMemory) MEMFreeToMappedMemory(drcFramebuffer);
+            else if (drcFromDefaultHeap && MEMFreeToDefaultHeap) MEMFreeToDefaultHeap(drcFramebuffer);
+        }
+        tvFramebuffer = NULL;
+        drcFramebuffer = NULL;
+        tvFramebufferSize = 0;
+        drcFramebufferSize = 0;
+        tvFromMapped = false;
+        drcFromMapped = false;
+        tvFromDefaultHeap = false;
+        drcFromDefaultHeap = false;
+        if (Menu_NotificationModuleLoaded()) {
+            NotificationModule_SetDefaultValue(NOTIFICATION_MODULE_NOTIFICATION_TYPE_ERROR, NOTIFICATION_MODULE_DEFAULT_OPTION_KEEP_UNTIL_SHOWN, true);
+            NotificationModule_SetDefaultValue(NOTIFICATION_MODULE_NOTIFICATION_TYPE_ERROR, NOTIFICATION_MODULE_DEFAULT_OPTION_DURATION_BEFORE_FADE_OUT, 5.0);
+            NotificationModule_AddInfoNotification("Cannot open menu - not enough memory");
+        }
         OSEnableHomeButtonMenu(homeWasEnabled);
         dc_restore(&savedDC);
-        return;
+        return false;
     }
 
     if (tvFramebuffer) OSScreenSetBufferEx(SCREEN_TV, tvFramebuffer);
     if (drcFramebuffer) OSScreenSetBufferEx(SCREEN_DRC, drcFramebuffer);
 
     for (int i = 0; i < 2; i++) {
-        if (tvFramebuffer) {
-            OSScreenClearBufferEx(SCREEN_TV, 0);
-        }
-        if (drcFramebuffer) {
-            OSScreenClearBufferEx(SCREEN_DRC, 0);
-        }
+        if (tvFramebuffer) OSScreenClearBufferEx(SCREEN_TV, 0);
+        if (drcFramebuffer) OSScreenClearBufferEx(SCREEN_DRC, 0);
         if (tvFramebuffer) {
             DCFlushRange(tvFramebuffer, tvFramebufferSize);
             OSScreenFlipBuffersEx(SCREEN_TV);
@@ -554,11 +551,52 @@ void Menu_Open(void) {
     if (drcFramebuffer) OSScreenEnableEx(SCREEN_DRC, TRUE);
 
     detect_tv_width();
-    if (tvFramebuffer) {
-        dc_set_pitch(SCREEN_TV, s_tvWidth);
-    }
-    int maxVisible = FOOTER_ROW - LIST_START_ROW;
+    if (tvFramebuffer) dc_set_pitch(SCREEN_TV, s_tvWidth);
+
     OSEnableHomeButtonMenu(FALSE);
+    return true;
+}
+
+static void Menu_DeinitRenderer(void) {
+    OSEnableHomeButtonMenu(homeWasEnabled);
+    dc_restore(&savedDC);
+
+    if (tvFramebuffer && tvFromMapped && MEMFreeToMappedMemory) {
+        MEMFreeToMappedMemory(tvFramebuffer);
+    } else if (tvFramebuffer && tvFromDefaultHeap && MEMFreeToDefaultHeap) {
+        MEMFreeToDefaultHeap(tvFramebuffer);
+    }
+    if (drcFramebuffer && drcFromMapped && MEMFreeToMappedMemory) {
+        MEMFreeToMappedMemory(drcFramebuffer);
+    } else if (drcFramebuffer && drcFromDefaultHeap && MEMFreeToDefaultHeap) {
+        MEMFreeToDefaultHeap(drcFramebuffer);
+    }
+    tvFramebuffer = NULL;
+    drcFramebuffer = NULL;
+    tvFramebufferSize = 0;
+    drcFramebufferSize = 0;
+    tvFromMapped = false;
+    drcFromMapped = false;
+    tvFromDefaultHeap = false;
+    drcFromDefaultHeap = false;
+}
+
+void Menu_Open(void) {
+    if (!Menu_InitRenderer()) return;
+
+    const HomebrewAppList *list = Cache_GetAppList();
+    if (!list || list->count == 0) {
+        Cache_Refresh();
+        list = Cache_GetAppList();
+        if (!list || list->count == 0) {
+            Menu_DeinitRenderer();
+            return;
+        }
+    }
+    Cache_SortByFavorites();
+    list = Cache_GetAppList();
+
+    int maxVisible = FOOTER_ROW - LIST_START_ROW;
 
     init_font();
 
@@ -750,26 +788,5 @@ void Menu_Open(void) {
     }
 
     deinit_font();
-
-    OSEnableHomeButtonMenu(homeWasEnabled);
-    dc_restore(&savedDC);
-
-    if (tvFramebuffer && tvFromMapped && MEMFreeToMappedMemory) {
-        MEMFreeToMappedMemory(tvFramebuffer);
-    } else if (tvFramebuffer && tvFromDefaultHeap && MEMFreeToDefaultHeap) {
-        MEMFreeToDefaultHeap(tvFramebuffer);
-    }
-    if (drcFramebuffer && drcFromMapped && MEMFreeToMappedMemory) {
-        MEMFreeToMappedMemory(drcFramebuffer);
-    } else if (drcFramebuffer && drcFromDefaultHeap && MEMFreeToDefaultHeap) {
-        MEMFreeToDefaultHeap(drcFramebuffer);
-    }
-    tvFramebuffer = NULL;
-    drcFramebuffer = NULL;
-    tvFramebufferSize = 0;
-    drcFramebufferSize = 0;
-    tvFromMapped = false;
-    drcFromMapped = false;
-    tvFromDefaultHeap = false;
-    drcFromDefaultHeap = false;
+    Menu_DeinitRenderer();
 }

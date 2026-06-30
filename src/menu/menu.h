@@ -3,3 +3,4 @@
 
 bool Menu_Init(void);
 void Menu_Open(void);
+bool Menu_NotificationModuleLoaded(void);

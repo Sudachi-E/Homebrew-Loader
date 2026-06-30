@@ -12,6 +12,7 @@
 #include "menu/menu.h"
 #include <gx2/surface.h>
 #include <gx2/display.h>
+#include <notifications/notifications.h>
 
 WUPS_PLUGIN_NAME("Homebrew Loader");
 WUPS_PLUGIN_DESCRIPTION("Browse and load homebrew from sd:/wiiu/apps");
@@ -30,11 +31,14 @@ typedef struct {
     GX2BufferingMode buffering_mode;
 } StoredBuffer;
 
+static bool s_notifModuleLoaded = false;
+
 static StoredBuffer gStoredTVBuffer;
 static StoredBuffer gStoredDRCBuffer;
 
 StoredBuffer *Menu_GetStoredTVBuffer(void) { return &gStoredTVBuffer; }
 StoredBuffer *Menu_GetStoredDRCBuffer(void) { return &gStoredDRCBuffer; }
+bool Menu_NotificationModuleLoaded(void) { return s_notifModuleLoaded; }
 
 DECL_FUNCTION(void, GX2SetTVBuffer_hook, void *buffer, uint32_t buffer_size,
               int32_t tv_render_mode, GX2SurfaceFormat format,
@@ -259,6 +263,8 @@ static WUPSConfigAPICallbackStatus ConfigMenuOpened(WUPSConfigCategoryHandle roo
 static void ConfigMenuClosed(void) {}
 
 INITIALIZE_PLUGIN() {
+    s_notifModuleLoaded = NotificationModule_InitLibrary() == NOTIFICATION_MODULE_RESULT_SUCCESS;
+
     WUPSConfigAPIOptionsV1 configOpts = { .name = "Homebrew Loader" };
     WUPSConfigAPI_Init(configOpts, ConfigMenuOpened, ConfigMenuClosed);
 
@@ -285,6 +291,7 @@ INITIALIZE_PLUGIN() {
 
 DEINITIALIZE_PLUGIN() {
     WUPSButtonComboAPI_RemoveButtonCombo(g_comboHandle);
+    NotificationModule_DeInitLibrary();
 }
 
 ON_APPLICATION_START() {
