@@ -5,6 +5,7 @@
 #include <coreinit/screen.h>
 #include <coreinit/cache.h>
 #include <coreinit/thread.h>
+#include <coreinit/time.h>
 #include <coreinit/memory.h>
 #include <coreinit/memdefaultheap.h>
 #include <memory/mappedmemory.h>
@@ -786,6 +787,8 @@ void Menu_Open(void) {
             scrollOffset = 0;
         }
     }
+
+    OSSleepTicks(OSMillisecondsToTicks(300));
 
     deinit_font();
     Menu_DeinitRenderer();

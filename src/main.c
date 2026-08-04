@@ -13,10 +13,12 @@
 #include <gx2/surface.h>
 #include <gx2/display.h>
 #include <notifications/notifications.h>
+#include <coreinit/thread.h>
+#include <vpad/input.h>
 
 WUPS_PLUGIN_NAME("Homebrew Loader");
 WUPS_PLUGIN_DESCRIPTION("Browse and load homebrew from sd:/wiiu/apps");
-WUPS_PLUGIN_VERSION("v1.2");
+WUPS_PLUGIN_VERSION("v1.4");
 WUPS_PLUGIN_AUTHOR("SudoTronics");
 WUPS_PLUGIN_LICENSE("GPL");
 
@@ -229,11 +231,24 @@ void RemoveQuickFavoriteByPath(const char *path) {
 static WUPSButtonCombo_ComboHandle g_comboHandle;
 static uint32_t g_currentCombo = OPEN_COMBO_DEFAULT;
 static bool s_menuOpen = false;
+static OSThread *g_menuThread = NULL;
+
+DECL_FUNCTION(int32_t, VPADRead_hook, int32_t chan, VPADStatus *buffer, uint32_t buffer_size, VPADReadError *error) {
+    if (s_menuOpen && OSGetCurrentThread() != g_menuThread) {
+        if (error) *error = VPAD_READ_NO_SAMPLES;
+        return 0;
+    }
+    return real_VPADRead_hook(chan, buffer, buffer_size, error);
+}
+
+WUPS_MUST_REPLACE(VPADRead_hook, WUPS_LOADER_LIBRARY_VPAD, VPADRead);
 
 static void openMenu(void) {
     if (s_menuOpen) return;
     s_menuOpen = true;
+    g_menuThread = OSGetCurrentThread();
     Menu_Open();
+    g_menuThread = NULL;
     s_menuOpen = false;
 }
 
