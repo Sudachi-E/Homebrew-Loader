@@ -99,7 +99,6 @@ static uint32_t s_tvHeight = 720;
 static float s_tvScale = 1.5f;
 static bool s_isBackBuffer = false;
 
-static int s_rowHeight = 24;
 #define DRC_VISIBLE_W 854
 #define DRC_VISIBLE_H 480
 #define DRC_STRIDE 896
@@ -212,39 +211,48 @@ static void fb_put_pixel_alpha(int x, int y, uint8_t r, uint8_t g, uint8_t b, ui
     }
 }
 
+#define COLOR_BG        0x1E1E2E00
+#define COLOR_TEXT      0xFFFFFF00
+#define COLOR_TEXT2     0x88888800
+#define COLOR_BORDER    0x45475A00
+#define COLOR_HIGHLIGHT 0x89B4FA00
+#define COLOR_BAR       0x585B7000
+#define COLOR_YELLOW    0xF9E2AF00
+
+#define ITEM_BOX_X      16
+#define ITEM_BOX_W      (DRC_VISIBLE_W - 16 * 2)
+#define ITEM_BOX_H      44
+#define ITEM_PITCH      50
+#define ITEM_TEXT_BASELINE (8 + 24)
+#define MAX_ITEMS_ON_SCREEN 8
+
+#define TOP_BAR_LINE_Y  36
+#define BOTTOM_BAR_LINE_Y (DRC_VISIBLE_H - 24 - 8 - 4)
+#define FOOTER_BASELINE_Y (DRC_VISIBLE_H - 10)
+
 static void fb_clear(void) {
     if (drcFramebuffer && drcFramebufferSize > 0) {
         uint32_t half = drcFramebufferSize / 2;
         uint32_t *buf = (uint32_t *)((uint8_t *)drcFramebuffer + (s_isBackBuffer ? half : 0));
         uint32_t pixels = half / 4;
-        for (uint32_t i = 0; i < pixels; i++) buf[i] = 0x1E1E2E00;
+        for (uint32_t i = 0; i < pixels; i++) buf[i] = COLOR_BG;
     }
     if (tvFramebuffer && tvFramebufferSize > 0) {
         uint32_t half = tvFramebufferSize / 2;
         uint32_t *buf = (uint32_t *)((uint8_t *)tvFramebuffer + (s_isBackBuffer ? half : 0));
         uint32_t pixels = half / 4;
-        for (uint32_t i = 0; i < pixels; i++) buf[i] = 0x1E1E2E00;
+        for (uint32_t i = 0; i < pixels; i++) buf[i] = COLOR_BG;
     }
 }
-
-#define HEADER_ROW      0
-#define LIST_START_ROW  2
-#define FOOTER_ROW      19
-
-#define COLOR_WHITE     0xFFFFFF00
-#define COLOR_BLUE      0x89B4FA00
-#define COLOR_YELLOW    0xF9E2AF00
-#define COLOR_GREEN     0xA6E3A100
-#define COLOR_GRAY      0x88888800
-#define COLOR_BG        0x1E1E2E00
-#define COLOR_HIGHLIGHT 0x45475A00
 
 static SFT s_sft;
 static bool s_fontOk = false;
 
-#define GLYPH_CACHE_SIZE 128
+#define GLYPH_CACHE_SIZE 192
+#define GLYPH_FALLBACK_ADVANCE 8
 typedef struct {
     uint32_t codepoint;
+    int size;
     bool valid;
     SFT_GMetrics metrics;
     uint8_t *pixels;
@@ -253,10 +261,7 @@ typedef struct {
 } GlyphEntry;
 static GlyphEntry s_glyphCache[GLYPH_CACHE_SIZE];
 static int s_glyphCount = 0;
-
-static int s_charWidth = 11;
-static int s_fontPixelHeight = 18;
-static int s_ascenderPx = 14;
+static int s_fontSize = 18;
 
 static uint32_t utf8_decode(const char **s) {
     unsigned char c = (unsigned char)**s;
@@ -310,25 +315,8 @@ static void init_font(void) {
     s_sft.font = font;
     s_sft.xScale = 18;
     s_sft.yScale = 18;
+    s_fontSize = 18;
     s_sft.flags = SFT_DOWNWARD_Y;
-
-    SFT_Glyph gid;
-    SFT_GMetrics m;
-    if (sft_lookup(&s_sft, (SFT_UChar)'n', &gid) >= 0 && sft_gmetrics(&s_sft, gid, &m) >= 0) {
-        s_charWidth = (int)(m.advanceWidth + 0.5);
-    }
-    if (s_charWidth < 8) s_charWidth = 8;
-    if (s_charWidth > 16) s_charWidth = 16;
-
-    SFT_LMetrics lm;
-    if (sft_lmetrics(&s_sft, &lm) >= 0) {
-        s_fontPixelHeight = (int)(lm.ascender - lm.descender + 0.5);
-        s_ascenderPx = (int)(lm.ascender + 0.5);
-    }
-    if (s_fontPixelHeight < 12) s_fontPixelHeight = 12;
-    if (s_fontPixelHeight > 30) s_fontPixelHeight = 30;
-    if (s_ascenderPx < 8) s_ascenderPx = 8;
-    if (s_ascenderPx > 24) s_ascenderPx = 24;
 
     glyph_cache_clear();
     s_fontOk = true;
@@ -340,13 +328,22 @@ static void deinit_font(void) {
         sft_freefont(s_sft.font);
         s_sft.font = NULL;
     }
+    s_fontSize = 18;
     s_fontOk = false;
+}
+
+static void set_font_size(uint32_t size) {
+    if (!s_fontOk || size == (uint32_t)s_fontSize) return;
+    s_fontSize = (int)size;
+    s_sft.xScale = size;
+    s_sft.yScale = size;
 }
 
 static GlyphEntry *get_glyph(uint32_t codepoint) {
     if (!s_fontOk) return NULL;
     for (int i = 0; i < s_glyphCount; i++) {
-        if (s_glyphCache[i].valid && s_glyphCache[i].codepoint == codepoint)
+        if (s_glyphCache[i].valid && s_glyphCache[i].codepoint == codepoint &&
+            s_glyphCache[i].size == s_fontSize)
             return &s_glyphCache[i];
     }
     if (s_glyphCount >= GLYPH_CACHE_SIZE) {
@@ -356,6 +353,7 @@ static GlyphEntry *get_glyph(uint32_t codepoint) {
     }
     GlyphEntry *entry = &s_glyphCache[s_glyphCount++];
     entry->codepoint = codepoint;
+    entry->size = s_fontSize;
     entry->valid = false;
     entry->pixels = NULL;
     SFT_Glyph gid;
@@ -381,8 +379,8 @@ static GlyphEntry *get_glyph(uint32_t codepoint) {
 static int render_glyph(int x, int y, uint32_t codepoint, uint32_t color) {
     GlyphEntry *g = get_glyph(codepoint);
     if (!g || !g->valid || !g->pixels) {
-        if (!s_fontOk) return 8;
-        return (int)(g ? g->metrics.advanceWidth + 0.5 : 8);
+        if (!s_fontOk) return GLYPH_FALLBACK_ADVANCE;
+        return (int)(g ? g->metrics.advanceWidth + 0.5 : GLYPH_FALLBACK_ADVANCE);
     }
     uint8_t fgR = (color >> 24) & 0xFF;
     uint8_t fgG = (color >> 16) & 0xFF;
@@ -409,7 +407,7 @@ static int text_width(const char *text) {
         if (g && g->valid)
             w += (int)(g->metrics.advanceWidth + 0.5);
         else
-            w += 8;
+            w += GLYPH_FALLBACK_ADVANCE;
     }
     return w;
 }
@@ -423,28 +421,74 @@ static void draw_text(int x, int y, const char *text, uint32_t color) {
     }
 }
 
-static void draw_text_colored_part(int x, int y, const char *text, int numColored, uint32_t color) {
-    if (!text) return;
-    int penX = x;
-    int count = 0;
-    while (*text) {
-        uint32_t cp = utf8_decode(&text);
-        uint32_t c = (count < numColored) ? color : COLOR_WHITE;
-        penX += render_glyph(penX, y, cp, c);
-        count++;
-    }
-}
-
 static void draw_rect(int x, int y, int w, int h, uint32_t color) {
-    for (int yy = y; yy < y + h; yy++) {
-        for (int xx = x; xx < x + w; xx++) {
-            fb_put_pixel(xx, yy, color);
+    if (w <= 0 || h <= 0) return;
+
+    if (drcFramebuffer && drcFramebufferSize > 0) {
+        int x0 = x < 0 ? 0 : x;
+        int x1 = x + w; if (x1 > DRC_VISIBLE_W) x1 = DRC_VISIBLE_W;
+        int y0 = y < 0 ? 0 : y;
+        int y1 = y + h; if (y1 > DRC_VISIBLE_H) y1 = DRC_VISIBLE_H;
+        if (x0 < x1 && y0 < y1) {
+            uint32_t half = drcFramebufferSize / 2;
+            uint32_t *buf = (uint32_t *)((uint8_t *)drcFramebuffer + (s_isBackBuffer ? half : 0));
+            int rowlen = x1 - x0;
+            for (int yy = y0; yy < y1; yy++) {
+                uint32_t *row = &buf[yy * DRC_STRIDE + x0];
+                for (int xx = 0; xx < rowlen; xx++) row[xx] = color;
+            }
+        }
+    }
+
+    if (tvFramebuffer && tvFramebufferSize > 0) {
+        int startX = (int)(x * s_tvScale);
+        int startY = (int)(y * s_tvScale);
+        int endX   = (int)((x + w) * s_tvScale);
+        int endY   = (int)((y + h) * s_tvScale);
+        if (startX < 0) startX = 0;
+        if (startY < 0) startY = 0;
+        if (endX > (int)s_tvWidth)  endX = (int)s_tvWidth;
+        if (endY > (int)s_tvHeight) endY = (int)s_tvHeight;
+        if (startX < endX && startY < endY) {
+            uint32_t half = tvFramebufferSize / 2;
+            uint32_t *buf = (uint32_t *)((uint8_t *)tvFramebuffer + (s_isBackBuffer ? half : 0));
+            int rowlen = endX - startX;
+            for (int yy = startY; yy < endY; yy++) {
+                uint32_t *row = &buf[yy * s_tvWidth + startX];
+                for (int xx = 0; xx < rowlen; xx++) row[xx] = color;
+            }
         }
     }
 }
 
-static int row_y(int row) {
-    return row * s_rowHeight + ((s_rowHeight - s_fontPixelHeight) / 2) + s_ascenderPx;
+static void draw_rect_outline(int x, int y, int w, int h, int thickness, uint32_t color) {
+    if (thickness <= 0) return;
+    draw_rect(x, y, w, thickness, color);
+    draw_rect(x, y + h - thickness, w, thickness, color);
+    draw_rect(x, y + thickness, thickness, h - 2 * thickness, color);
+    draw_rect(x + w - thickness, y + thickness, thickness, h - 2 * thickness, color);
+}
+
+static void draw_line(int x0, int y0, int x1, int y1, uint32_t color) {
+    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
+    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
+    int err = dx + dy;
+    for (;;) {
+        fb_put_pixel(x0, y0, color);
+        if (x0 == x1 && y0 == y1) break;
+        int e2 = 2 * err;
+        if (e2 >= dy) { err += dy; x0 += sx; }
+        if (e2 <= dx) { err += dx; y0 += sy; }
+    }
+}
+
+static void draw_checkbox(int x, int y, int size, bool checked, uint32_t color) {
+    draw_rect_outline(x, y, size, size, 2, color);
+    if (checked) {
+        int m = size / 4;
+        draw_line(x + m, y + m, x + size - m, y + size - m, color);
+        draw_line(x + size - m, y + m, x + m, y + size - m, color);
+    }
 }
 
 static void normalize_app_name(char *buf, size_t bufSize, const char *name) {
@@ -597,7 +641,7 @@ void Menu_Open(void) {
     Cache_SortByFavorites();
     list = Cache_GetAppList();
 
-    int maxVisible = FOOTER_ROW - LIST_START_ROW;
+    int maxVisible = MAX_ITEMS_ON_SCREEN;
 
     init_font();
 
@@ -611,14 +655,18 @@ void Menu_Open(void) {
 
         fb_clear();
 
-        draw_text(8, row_y(HEADER_ROW), "Homebrew Menu", COLOR_GREEN);
+        set_font_size(24);
+        draw_text(16, 6 + 24, "Homebrew Menu", COLOR_TEXT);
         {
-            char countStr[32];
+            set_font_size(18);
+            char countStr[64];
             snprintf(countStr, sizeof(countStr), "%d apps", (int)list->count);
             int cw = text_width(countStr);
-            draw_text(DRC_VISIBLE_W - 8 - cw, row_y(HEADER_ROW), countStr, COLOR_BLUE);
+            draw_text(DRC_VISIBLE_W - 16 - cw, 8 + 24, countStr, COLOR_TEXT);
         }
+        draw_rect(8, TOP_BAR_LINE_Y, DRC_VISIBLE_W - 8 * 2, 3, COLOR_BAR);
 
+        uint32_t yOffset = 8 + 24 + 8 + 4;
         for (int i = 0; i < maxVisible; i++) {
             int idx = scrollOffset + i;
             if (idx >= (int)list->count) break;
@@ -627,29 +675,54 @@ void Menu_Open(void) {
             char name[128];
             normalize_app_name(name, sizeof(name), app->name ? app->name : "Unknown");
 
-            int itemY = (LIST_START_ROW + i) * s_rowHeight;
-            if (idx == selectedIndex) {
-                draw_rect(0, itemY, DRC_VISIBLE_W - 16, s_rowHeight, COLOR_HIGHLIGHT);
+            bool isSelected = (idx == selectedIndex);
+            bool isFav      = IsPathFavorited(app->path);
+
+            if (isSelected) {
+                draw_rect_outline(ITEM_BOX_X, yOffset, ITEM_BOX_W, ITEM_BOX_H, 4, COLOR_HIGHLIGHT);
+            } else {
+                draw_rect_outline(ITEM_BOX_X, yOffset, ITEM_BOX_W, ITEM_BOX_H, 2, COLOR_BORDER);
             }
 
-            char line[160];
-            int lineY = row_y(LIST_START_ROW + i);
-            if (IsPathFavorited(app->path)) {
-                snprintf(line, sizeof(line), " * %s", name);
-                draw_text_colored_part(8, lineY, line, 3, COLOR_YELLOW);
-            } else {
-                snprintf(line, sizeof(line), "   %s", name);
-                draw_text(8, lineY, line, COLOR_WHITE);
+            draw_checkbox(ITEM_BOX_X * 2, yOffset + ITEM_TEXT_BASELINE - 18, 18, isFav, isFav ? COLOR_YELLOW : COLOR_TEXT);
+
+            set_font_size(24);
+            draw_text(ITEM_BOX_X * 2 + 18 + 10, yOffset + ITEM_TEXT_BASELINE, name, isFav ? COLOR_YELLOW : COLOR_TEXT);
+
+            if (isFav) {
+                set_font_size(18);
+                int vw = text_width("Fav");
+                draw_text(DRC_VISIBLE_W - ITEM_BOX_X * 2 - vw, yOffset + ITEM_TEXT_BASELINE, "Fav", COLOR_TEXT2);
+                set_font_size(24);
             }
+
+            yOffset += ITEM_PITCH;
         }
 
-        draw_text(8, row_y(FOOTER_ROW), "\xEE\x80\x80:Launch  \xEE\x80\x81:Close  \xEE\x80\x83:Fav  \xEE\x81\x86:Refresh  \xEE\x80\x84:Top  \xEE\x80\x85:Bottom  \xEE\x81\xBD:Nav", COLOR_WHITE);
+        draw_rect(8, BOTTOM_BAR_LINE_Y, DRC_VISIBLE_W - 8 * 2, 3, COLOR_BAR);
+        set_font_size(18);
 
-        if ((int)list->count > maxVisible) {
-            int scrollMax = (int)list->count - maxVisible;
-            float pct = (scrollMax > 0) ? (float)scrollOffset / scrollMax : 0;
-            int barRow = LIST_START_ROW + (int)(pct * (maxVisible - 2));
-            draw_rect(DRC_VISIBLE_W - 20, barRow * s_rowHeight, 2, 2, COLOR_GRAY);
+        draw_text(16, FOOTER_BASELINE_Y, "\xEE\x81\xBD Navigate", COLOR_TEXT);
+        {
+            const char *launchHint  = "\xEE\x80\x80 Launch  \xEE\x81\x85 Fav";
+            const char *closeHint   = "\xEE\x80\x81 Close";
+            const char *refreshHint = "\xEE\x81\x86 Refresh";
+            const int rightW   = text_width(refreshHint);
+            const int rightX   = DRC_VISIBLE_W - 16 - rightW;
+            const int gap      = text_width("  ");
+            const int closeW   = text_width(closeHint);
+            const int launchW  = text_width(launchHint);
+            draw_text(rightX - gap - closeW - gap - launchW, FOOTER_BASELINE_Y, launchHint, COLOR_TEXT);
+            draw_text(rightX - gap - closeW, FOOTER_BASELINE_Y, closeHint, COLOR_TEXT);
+            draw_text(rightX, FOOTER_BASELINE_Y, refreshHint, COLOR_TEXT);
+        }
+
+        set_font_size(24);
+        if ((int)list->count > maxVisible && scrollOffset + maxVisible < (int)list->count) {
+            draw_text(DRC_VISIBLE_W / 2 + 12, DRC_VISIBLE_H - 32, "\xEF\xB8\xBE", COLOR_TEXT);
+        }
+        if (scrollOffset > 0) {
+            draw_text(DRC_VISIBLE_W / 2 + 12, 32 + 20, "\xEF\xB8\xBD", COLOR_TEXT);
         }
 
         if (tvFramebuffer) {
@@ -751,7 +824,7 @@ void Menu_Open(void) {
             menuOpen = 0;
         }
 
-        if (pressed & VPAD_BUTTON_Y) {
+        if (pressed & VPAD_BUTTON_PLUS) {
             const HomebrewApp *app = &list->items[selectedIndex];
             if (IsPathFavorited(app->path)) {
                 RemoveQuickFavoriteByPath(app->path);

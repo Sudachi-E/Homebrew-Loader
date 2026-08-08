@@ -93,7 +93,22 @@ static void scan_dir(const char *dir_path, HomebrewApp **items, size_t *count, s
             (*items)[*count].is_wuhb = ends_with(ent->d_name, ".wuhb");
             char *meta_name          = NULL;
             if (read_meta_name(dir_path, &meta_name)) {
-                (*items)[*count].name = meta_name;
+                const char *dot = strrchr(ent->d_name, '.');
+                size_t metaLen  = strlen(meta_name);
+                size_t extLen   = dot ? strlen(dot) : 0;
+                char *nm        = (char *) malloc(metaLen + extLen + 1);
+                if (nm) {
+                    memcpy(nm, meta_name, metaLen);
+                    if (extLen) {
+                        memcpy(nm + metaLen, dot, extLen + 1);
+                    } else {
+                        nm[metaLen] = '\0';
+                    }
+                    (*items)[*count].name = nm;
+                } else {
+                    (*items)[*count].name = dupstr(ent->d_name);
+                }
+                free(meta_name);
             } else {
                 (*items)[*count].name = dupstr(ent->d_name);
             }
