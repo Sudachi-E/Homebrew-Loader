@@ -8,6 +8,7 @@
 #include <wups/button_combo/api.h>
 #include <wups/config_api.h>
 #include <wups/config/WUPSConfigItemButtonCombo.h>
+#include <wups/config/WUPSConfigItemBoolean.h>
 #include "menu/cache.h"
 #include "menu/menu.h"
 #include <gx2/surface.h>
@@ -18,7 +19,7 @@
 
 WUPS_PLUGIN_NAME("Homebrew Loader");
 WUPS_PLUGIN_DESCRIPTION("Browse and load homebrew from sd:/wiiu/apps");
-WUPS_PLUGIN_VERSION("v1.4");
+WUPS_PLUGIN_VERSION("v1.5");
 WUPS_PLUGIN_AUTHOR("SudoTronics");
 WUPS_PLUGIN_LICENSE("GPL");
 
@@ -227,9 +228,11 @@ void RemoveQuickFavoriteByPath(const char *path) {
 
 #define OPEN_COMBO_DEFAULT (VPAD_BUTTON_L | VPAD_BUTTON_R | VPAD_BUTTON_DOWN)
 #define OPEN_COMBO_STORAGE_KEY "openCombo"
+#define WUHB_ONLY_STORAGE_KEY "wuhbOnly"
 
 static WUPSButtonCombo_ComboHandle g_comboHandle;
 static uint32_t g_currentCombo = OPEN_COMBO_DEFAULT;
+static bool g_wuhbOnly = false;
 static bool s_menuOpen = false;
 static OSThread *g_menuThread = NULL;
 
@@ -267,11 +270,21 @@ static void ConfigComboValueChanged(ConfigItemButtonCombo *item, uint32_t newCom
     WUPSButtonComboAPI_UpdateButtonCombo(g_comboHandle, (WUPSButtonCombo_Buttons)newCombo, NULL);
 }
 
+static void ConfigWuhbOnlyValueChanged(ConfigItemBoolean *item, bool newValue) {
+    (void)item;
+    g_wuhbOnly = newValue;
+    WUPSStorageAPI_StoreBool(NULL, WUHB_ONLY_STORAGE_KEY, g_wuhbOnly);
+    Cache_SetWuhbOnly(g_wuhbOnly);
+}
+
 static WUPSConfigAPICallbackStatus ConfigMenuOpened(WUPSConfigCategoryHandle root) {
     WUPSConfigItemButtonCombo_AddToCategory(root,
         OPEN_COMBO_STORAGE_KEY, "Open Menu Combo",
         (WUPSButtonCombo_Buttons)g_currentCombo, g_comboHandle,
         ConfigComboValueChanged);
+    WUPSConfigItemBoolean_AddToCategory(root,
+        WUHB_ONLY_STORAGE_KEY, "Show .wuhb Only",
+        false, g_wuhbOnly, ConfigWuhbOnlyValueChanged);
     return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
 }
 
@@ -290,8 +303,14 @@ INITIALIZE_PLUGIN() {
         }
     }
 
+    bool savedWuhbOnly = false;
+    if (WUPSStorageAPI_GetBool(NULL, WUHB_ONLY_STORAGE_KEY, &savedWuhbOnly) == WUPS_STORAGE_ERROR_SUCCESS) {
+        g_wuhbOnly = savedWuhbOnly;
+    }
+
     LoadQuickFavorites();
     Menu_Init();
+    Cache_SetWuhbOnly(g_wuhbOnly);
 
     WUPSButtonCombo_ComboStatus status;
     WUPSButtonComboAPI_AddButtonComboPressDownObserver(

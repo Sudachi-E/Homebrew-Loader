@@ -140,31 +140,6 @@ static void detect_backbuffer(void) {
     buf[0] = saved;
 }
 
-static void fb_put_pixel(int x, int y, uint32_t color) {
-    if (drcFramebuffer && drcFramebufferSize > 0) {
-        if (x >= 0 && x < DRC_VISIBLE_W && y >= 0 && y < DRC_VISIBLE_H) {
-            uint32_t half = drcFramebufferSize / 2;
-            uint32_t *buf = (uint32_t *)((uint8_t *)drcFramebuffer + (s_isBackBuffer ? half : 0));
-            buf[y * DRC_STRIDE + x] = color;
-        }
-    }
-    if (tvFramebuffer && tvFramebufferSize > 0) {
-        int startX = (int)(x * s_tvScale);
-        int startY = (int)(y * s_tvScale);
-        int endX = (int)((x + 1) * s_tvScale);
-        int endY = (int)((y + 1) * s_tvScale);
-        uint32_t half = tvFramebufferSize / 2;
-        uint32_t *buf = (uint32_t *)((uint8_t *)tvFramebuffer + (s_isBackBuffer ? half : 0));
-        for (int yy = startY; yy < endY; yy++) {
-            if (yy < 0 || yy >= (int)s_tvHeight) continue;
-            for (int xx = startX; xx < endX; xx++) {
-                if (xx < 0 || xx >= (int)s_tvWidth) continue;
-                buf[yy * s_tvWidth + xx] = color;
-            }
-        }
-    }
-}
-
 static void fb_put_pixel_alpha(int x, int y, uint8_t r, uint8_t g, uint8_t b, uint8_t alpha) {
     if (alpha == 0) return;
     if (drcFramebuffer && drcFramebufferSize > 0) {
@@ -469,28 +444,6 @@ static void draw_rect_outline(int x, int y, int w, int h, int thickness, uint32_
     draw_rect(x + w - thickness, y + thickness, thickness, h - 2 * thickness, color);
 }
 
-static void draw_line(int x0, int y0, int x1, int y1, uint32_t color) {
-    int dx = abs(x1 - x0), sx = x0 < x1 ? 1 : -1;
-    int dy = -abs(y1 - y0), sy = y0 < y1 ? 1 : -1;
-    int err = dx + dy;
-    for (;;) {
-        fb_put_pixel(x0, y0, color);
-        if (x0 == x1 && y0 == y1) break;
-        int e2 = 2 * err;
-        if (e2 >= dy) { err += dy; x0 += sx; }
-        if (e2 <= dx) { err += dx; y0 += sy; }
-    }
-}
-
-static void draw_checkbox(int x, int y, int size, bool checked, uint32_t color) {
-    draw_rect_outline(x, y, size, size, 2, color);
-    if (checked) {
-        int m = size / 4;
-        draw_line(x + m, y + m, x + size - m, y + size - m, color);
-        draw_line(x + size - m, y + m, x + m, y + size - m, color);
-    }
-}
-
 static void normalize_app_name(char *buf, size_t bufSize, const char *name) {
     if (!name || !buf || bufSize == 0) return;
     size_t len = strlen(name);
@@ -684,10 +637,8 @@ void Menu_Open(void) {
                 draw_rect_outline(ITEM_BOX_X, yOffset, ITEM_BOX_W, ITEM_BOX_H, 2, COLOR_BORDER);
             }
 
-            draw_checkbox(ITEM_BOX_X * 2, yOffset + ITEM_TEXT_BASELINE - 18, 18, isFav, isFav ? COLOR_YELLOW : COLOR_TEXT);
-
             set_font_size(24);
-            draw_text(ITEM_BOX_X * 2 + 18 + 10, yOffset + ITEM_TEXT_BASELINE, name, isFav ? COLOR_YELLOW : COLOR_TEXT);
+            draw_text(ITEM_BOX_X * 2, yOffset + ITEM_TEXT_BASELINE, name, isFav ? COLOR_YELLOW : COLOR_TEXT);
 
             if (isFav) {
                 set_font_size(18);

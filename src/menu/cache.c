@@ -7,12 +7,36 @@ extern bool IsPathFavorited(const char *path);
 
 static HomebrewAppList s_cachedList = {NULL, 0};
 static bool s_cacheValid = false;
+static bool s_wuhbOnly = false;
 
 bool Cache_Init(void) {
     s_cachedList.items = NULL;
     s_cachedList.count = 0;
     s_cacheValid = false;
     return true;
+}
+
+static void cache_filter(void) {
+    if (!s_wuhbOnly) return;
+    if (!s_cachedList.items || s_cachedList.count == 0) return;
+
+    size_t out = 0;
+    for (size_t i = 0; i < s_cachedList.count; i++) {
+        if (!s_cachedList.items[i].is_wuhb) {
+            free(s_cachedList.items[i].name);
+            free(s_cachedList.items[i].path);
+            continue;
+        }
+        if (out != i) {
+            s_cachedList.items[out] = s_cachedList.items[i];
+        }
+        out++;
+    }
+    s_cachedList.count = out;
+    if (out == 0) {
+        free(s_cachedList.items);
+        s_cachedList.items = NULL;
+    }
 }
 
 bool Cache_Refresh(void) {
@@ -28,9 +52,16 @@ bool Cache_Refresh(void) {
         }
     }
 
+    cache_filter();
     s_cacheValid = true;
     DEBUG_FUNCTION_LINE_INFO("Cached %d homebrew apps", (int)s_cachedList.count);
     return true;
+}
+
+void Cache_SetWuhbOnly(bool only) {
+    if (s_wuhbOnly == only) return;
+    s_wuhbOnly = only;
+    Cache_Refresh();
 }
 
 const HomebrewAppList *Cache_GetAppList(void) {
