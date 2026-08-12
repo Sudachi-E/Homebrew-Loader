@@ -2,7 +2,7 @@
 
 An Aroma plugin that opens an overlay menu to browse and launch homebrew from the SD card via a button combo (default: L + R + D-Pad Down).
 
-The button combo can be changed in the Aroma Config Menu.
+The button combo can be changed in the Aroma Config Menu and the option to only show .wuhb homebrew.
 
 ## Features
 - Scans `sd:/wiiu/apps` recursively for `.wuhb` and `.rpx` homebrew
@@ -25,4 +25,5 @@ The button combo can be changed in the Aroma Config Menu.
 
 ## Credits
 - Thanks to [@Maschell](https://github.com/Maschell) for WUPS, WUMS
+- UI based on [WiiUPluginLoaderBackend](https://github.com/wiiu-env/WiiUPluginLoaderBackend) by [@Maschell](https://github.com/Maschell)
 - The [@devkitpro](https://github.com/devkitPro) team for WUT
