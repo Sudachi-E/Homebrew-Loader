@@ -19,7 +19,7 @@
 
 WUPS_PLUGIN_NAME("Homebrew Loader");
 WUPS_PLUGIN_DESCRIPTION("Browse and load homebrew from sd:/wiiu/apps");
-WUPS_PLUGIN_VERSION("v1.5");
+WUPS_PLUGIN_VERSION("v1.6");
 WUPS_PLUGIN_AUTHOR("SudoTronics");
 WUPS_PLUGIN_LICENSE("GPL");
 
@@ -234,30 +234,29 @@ static WUPSButtonCombo_ComboHandle g_comboHandle;
 static uint32_t g_currentCombo = OPEN_COMBO_DEFAULT;
 static bool g_wuhbOnly = false;
 static bool s_menuOpen = false;
-static OSThread *g_menuThread = NULL;
+static volatile bool s_wantsToOpenMenu = false;
 
-DECL_FUNCTION(int32_t, VPADRead_hook, int32_t chan, VPADStatus *buffer, uint32_t buffer_size, VPADReadError *error) {
-    if (s_menuOpen && OSGetCurrentThread() != g_menuThread) {
-        if (error) *error = VPAD_READ_NO_SAMPLES;
-        return 0;
+DECL_FUNCTION(void, GX2SwapScanBuffers_hook, void) {
+    real_GX2SwapScanBuffers_hook();
+
+    if (s_wantsToOpenMenu && !s_menuOpen) {
+        s_wantsToOpenMenu = false;
+        s_menuOpen = true;
+        Menu_Open();
+        s_menuOpen = false;
     }
-    return real_VPADRead_hook(chan, buffer, buffer_size, error);
 }
 
-WUPS_MUST_REPLACE(VPADRead_hook, WUPS_LOADER_LIBRARY_VPAD, VPADRead);
+WUPS_MUST_REPLACE(GX2SwapScanBuffers_hook, WUPS_LOADER_LIBRARY_GX2, GX2SwapScanBuffers);
 
 static void openMenu(void) {
     if (s_menuOpen) return;
-    s_menuOpen = true;
-    g_menuThread = OSGetCurrentThread();
-    Menu_Open();
-    g_menuThread = NULL;
-    s_menuOpen = false;
+    s_wantsToOpenMenu = true;
 }
 
 static void comboCallback(WUPSButtonCombo_ControllerTypes triggeredBy,
-                           WUPSButtonCombo_ComboHandle handle,
-                           void *context) {
+                          WUPSButtonCombo_ComboHandle handle,
+                          void *context) {
     (void)triggeredBy;
     (void)handle;
     (void)context;
@@ -274,6 +273,7 @@ static void ConfigWuhbOnlyValueChanged(ConfigItemBoolean *item, bool newValue) {
     (void)item;
     g_wuhbOnly = newValue;
     WUPSStorageAPI_StoreBool(NULL, WUHB_ONLY_STORAGE_KEY, g_wuhbOnly);
+    WUPSStorageAPI_SaveStorage(false);
     Cache_SetWuhbOnly(g_wuhbOnly);
 }
 
@@ -283,7 +283,7 @@ static WUPSConfigAPICallbackStatus ConfigMenuOpened(WUPSConfigCategoryHandle roo
         (WUPSButtonCombo_Buttons)g_currentCombo, g_comboHandle,
         ConfigComboValueChanged);
     WUPSConfigItemBoolean_AddToCategory(root,
-        WUHB_ONLY_STORAGE_KEY, "Show .wuhb Only",
+        WUHB_ONLY_STORAGE_KEY, "Show .wuhb only",
         false, g_wuhbOnly, ConfigWuhbOnlyValueChanged);
     return WUPSCONFIG_API_CALLBACK_RESULT_SUCCESS;
 }

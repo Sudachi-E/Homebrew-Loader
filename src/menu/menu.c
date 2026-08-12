@@ -7,6 +7,7 @@
 #include <coreinit/thread.h>
 #include <coreinit/time.h>
 #include <coreinit/memory.h>
+#include <coreinit/energysaver.h>
 #include <coreinit/memdefaultheap.h>
 #include <memory/mappedmemory.h>
 #include <gx2/surface.h>
@@ -90,6 +91,7 @@ static uint32_t tvFramebufferSize = 0;
 static uint32_t drcFramebufferSize = 0;
 static DCRegisters savedDC;
 static int homeWasEnabled = 0;
+static uint32_t s_savedDrcDim = 0;
 static bool tvFromMapped = false;
 static bool drcFromMapped = false;
 static bool tvFromDefaultHeap = false;
@@ -465,6 +467,8 @@ bool Menu_Init(void) {
 static bool Menu_InitRenderer(void) {
     homeWasEnabled = OSIsHomeButtonMenuEnabled();
     dc_save(&savedDC);
+    IMGetDimEnableDRC(&s_savedDrcDim);
+    IMSetDimEnableDRC(FALSE);
 
     OSScreenInit();
     tvFramebufferSize = OSScreenGetBufferSizeEx(SCREEN_TV);
@@ -556,6 +560,7 @@ static bool Menu_InitRenderer(void) {
 }
 
 static void Menu_DeinitRenderer(void) {
+    IMSetDimEnableDRC(s_savedDrcDim);
     OSEnableHomeButtonMenu(homeWasEnabled);
     dc_restore(&savedDC);
 
@@ -643,7 +648,7 @@ void Menu_Open(void) {
             if (isFav) {
                 set_font_size(18);
                 int vw = text_width("Fav");
-                draw_text(DRC_VISIBLE_W - ITEM_BOX_X * 2 - vw, yOffset + ITEM_TEXT_BASELINE, "Fav", COLOR_TEXT2);
+                draw_text(DRC_VISIBLE_W - ITEM_BOX_X * 2 - vw, yOffset + ITEM_TEXT_BASELINE, "Fav", COLOR_YELLOW);
                 set_font_size(24);
             }
 
