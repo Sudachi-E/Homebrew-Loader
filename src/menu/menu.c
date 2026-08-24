@@ -14,6 +14,7 @@
 #include <gx2/display.h>
 #include <gx2/event.h>
 #include <vpad/input.h>
+#include <padscore/kpad.h>
 #include <rpxloader/rpxloader.h>
 #include <notifications/notifications.h>
 #include <string.h>
@@ -690,20 +691,91 @@ void Menu_Open(void) {
             OSScreenFlipBuffersEx(SCREEN_DRC);
         }
 
-    VPADStatus vpad;
-    VPADReadError err;
-    int32_t read = VPADRead(VPAD_CHAN_0, &vpad, 1, &err);
-    if (read <= 0 || err != VPAD_READ_SUCCESS) {
-        for (int retry = 0; retry < 5; retry++) {
-            OSYieldThread();
-            read = VPADRead(VPAD_CHAN_0, &vpad, 1, &err);
-            if (read > 0 && err == VPAD_READ_SUCCESS) break;
+    uint32_t pressed = 0;
+    uint32_t held = 0;
+    {
+        VPADStatus vpad;
+        VPADReadError err;
+        int32_t read = VPADRead(VPAD_CHAN_0, &vpad, 1, &err);
+        if (read <= 0 || err != VPAD_READ_SUCCESS) {
+            for (int retry = 0; retry < 5; retry++) {
+                OSYieldThread();
+                read = VPADRead(VPAD_CHAN_0, &vpad, 1, &err);
+                if (read > 0 && err == VPAD_READ_SUCCESS) break;
+            }
         }
-        if (read <= 0 || err != VPAD_READ_SUCCESS) continue;
+        if (read > 0 && err == VPAD_READ_SUCCESS) {
+            pressed |= vpad.trigger;
+            held    |= vpad.hold;
+        }
     }
 
-    uint32_t pressed = vpad.trigger;
-    uint32_t held = vpad.hold;
+    for (KPADChan chan = WPAD_CHAN_0; chan <= WPAD_CHAN_3; chan++) {
+        KPADStatus kpad;
+        KPADError kerr;
+        uint32_t read = KPADReadEx(chan, &kpad, 1, &kerr);
+        if (read == 0 || kerr != KPAD_ERROR_OK) continue;
+
+        uint32_t kp = 0, kh = 0;
+
+        if (kpad.extensionType == WPAD_EXT_PRO_CONTROLLER) {
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_UP)    kp |= VPAD_BUTTON_UP;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_DOWN)  kp |= VPAD_BUTTON_DOWN;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_LEFT)  kp |= VPAD_BUTTON_LEFT;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_RIGHT) kp |= VPAD_BUTTON_RIGHT;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_A)     kp |= VPAD_BUTTON_A;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_B)     kp |= VPAD_BUTTON_B;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_PLUS)  kp |= VPAD_BUTTON_PLUS;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_MINUS) kp |= VPAD_BUTTON_MINUS;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_L)     kp |= VPAD_BUTTON_L;
+            if (kpad.pro.trigger & WPAD_PRO_BUTTON_R)     kp |= VPAD_BUTTON_R;
+
+            if (kpad.pro.hold & WPAD_PRO_BUTTON_UP)    kh |= VPAD_BUTTON_UP;
+            if (kpad.pro.hold & WPAD_PRO_BUTTON_DOWN)  kh |= VPAD_BUTTON_DOWN;
+
+            if (kpad.pro.leftStick.y >  0.5f) { kp |= VPAD_BUTTON_UP;   kh |= VPAD_BUTTON_UP;   }
+            if (kpad.pro.leftStick.y < -0.5f) { kp |= VPAD_BUTTON_DOWN; kh |= VPAD_BUTTON_DOWN; }
+
+        } else if (kpad.extensionType == WPAD_EXT_CORE ||
+                   kpad.extensionType == WPAD_EXT_MPLUS) {
+            if (kpad.trigger & WPAD_BUTTON_UP)    kp |= VPAD_BUTTON_UP;
+            if (kpad.trigger & WPAD_BUTTON_DOWN)  kp |= VPAD_BUTTON_DOWN;
+            if (kpad.trigger & WPAD_BUTTON_LEFT)  kp |= VPAD_BUTTON_LEFT;
+            if (kpad.trigger & WPAD_BUTTON_RIGHT) kp |= VPAD_BUTTON_RIGHT;
+            if (kpad.trigger & WPAD_BUTTON_A)     kp |= VPAD_BUTTON_A;
+            if (kpad.trigger & WPAD_BUTTON_B)     kp |= VPAD_BUTTON_B;
+            if (kpad.trigger & WPAD_BUTTON_PLUS)  kp |= VPAD_BUTTON_PLUS;
+            if (kpad.trigger & WPAD_BUTTON_MINUS) kp |= VPAD_BUTTON_MINUS;
+            if (kpad.trigger & WPAD_BUTTON_1)     kp |= VPAD_BUTTON_L;
+            if (kpad.trigger & WPAD_BUTTON_2)     kp |= VPAD_BUTTON_R;
+
+            if (kpad.hold & WPAD_BUTTON_UP)   kh |= VPAD_BUTTON_UP;
+            if (kpad.hold & WPAD_BUTTON_DOWN) kh |= VPAD_BUTTON_DOWN;
+
+        } else if (kpad.extensionType == WPAD_EXT_CLASSIC) {
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_UP)    kp |= VPAD_BUTTON_UP;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_DOWN)  kp |= VPAD_BUTTON_DOWN;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_LEFT)  kp |= VPAD_BUTTON_LEFT;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_RIGHT) kp |= VPAD_BUTTON_RIGHT;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_A)     kp |= VPAD_BUTTON_A;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_B)     kp |= VPAD_BUTTON_B;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_PLUS)  kp |= VPAD_BUTTON_PLUS;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_MINUS) kp |= VPAD_BUTTON_MINUS;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_L)     kp |= VPAD_BUTTON_L;
+            if (kpad.classic.trigger & WPAD_CLASSIC_BUTTON_R)     kp |= VPAD_BUTTON_R;
+
+            if (kpad.classic.hold & WPAD_CLASSIC_BUTTON_UP)    kh |= VPAD_BUTTON_UP;
+            if (kpad.classic.hold & WPAD_CLASSIC_BUTTON_DOWN)  kh |= VPAD_BUTTON_DOWN;
+
+            if (kpad.classic.leftStick.y >  0.5f) { kp |= VPAD_BUTTON_UP;   kh |= VPAD_BUTTON_UP;   }
+            if (kpad.classic.leftStick.y < -0.5f) { kp |= VPAD_BUTTON_DOWN; kh |= VPAD_BUTTON_DOWN; }
+        }
+
+        pressed |= kp;
+        held    |= kh;
+    }
+
+    if (pressed == 0 && held == 0) continue;
 
     static int s_repeatTimer = 0;
     int repeatMove = 0;

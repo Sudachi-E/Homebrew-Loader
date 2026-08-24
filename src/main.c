@@ -16,6 +16,7 @@
 #include <notifications/notifications.h>
 #include <coreinit/thread.h>
 #include <vpad/input.h>
+#include <padscore/kpad.h>
 
 WUPS_PLUGIN_NAME("Homebrew Loader");
 WUPS_PLUGIN_DESCRIPTION("Browse and load homebrew from sd:/wiiu/apps");
@@ -291,6 +292,7 @@ static WUPSConfigAPICallbackStatus ConfigMenuOpened(WUPSConfigCategoryHandle roo
 static void ConfigMenuClosed(void) {}
 
 INITIALIZE_PLUGIN() {
+    KPADInit();
     s_notifModuleLoaded = NotificationModule_InitLibrary() == NOTIFICATION_MODULE_RESULT_SUCCESS;
 
     WUPSConfigAPIOptionsV1 configOpts = { .name = "Homebrew Loader" };
@@ -326,6 +328,7 @@ INITIALIZE_PLUGIN() {
 DEINITIALIZE_PLUGIN() {
     WUPSButtonComboAPI_RemoveButtonCombo(g_comboHandle);
     NotificationModule_DeInitLibrary();
+    KPADShutdown();
 }
 
 ON_APPLICATION_START() {
